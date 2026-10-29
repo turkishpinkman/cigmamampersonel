@@ -61,7 +61,8 @@ const state = {
     employees: null,
     events: null,
     settings: null
-  }
+  },
+  employeesLoaded: false
 };
 
 // =============================================================================
@@ -688,6 +689,7 @@ function startFirestoreListeners() {
       // İsim alfabetik sıralama
       list.sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
       state.employees = list;
+      state.employeesLoaded = true;
 
       // Navigasyon sayısını güncelle
       const activeCount = list.filter(e => e.active).length;
@@ -731,9 +733,10 @@ function startFirestoreListeners() {
       state.events = list;
 
       // OTOMATİK PERSONEL SENKRONİZASYONU:
-      // Eğer bir personel cihazdan hızlıca eklenip kart bastıysa ancak Firestore 'employees'
-      // koleksiyonuna henüz yazılmamışsa, gelen events kayıtlarından bunu anında yakala ve employees'e ekle!
-      syncMissingEmployeesFromEvents(list);
+      // SADECE employees koleksiyonu tamamen yüklendikten sonra ve eksik bir kayıt varsa çalışır!
+      if (state.employeesLoaded) {
+        syncMissingEmployeesFromEvents(list);
+      }
 
       if (state.currentTab === 'dashboard') renderDashboard();
       if (state.currentTab === 'records') applyRecordsFilter();
@@ -763,6 +766,7 @@ function stopFirestoreListeners() {
  */
 async function syncMissingEmployeesFromEvents(eventsList) {
   if (!db || !eventsList || eventsList.length === 0) return;
+  if (!state.employeesLoaded) return; // Personel koleksiyonu yüklenmeden ASLA çalıştırma!
 
   const existingUids = new Set((state.employees || []).map(e => e.uid));
   const seenInBatch = new Set();
@@ -772,13 +776,21 @@ async function syncMissingEmployeesFromEvents(eventsList) {
     seenInBatch.add(evt.uid);
 
     const safeDocId = evt.uid.replace(/:/g, '');
-    let empState = 0;
-    if (evt.type === 'GIRIS' || evt.type === 'MOLA_BIT') empState = 1;
-    else if (evt.type === 'MOLA_BAS') empState = 2;
-    else if (evt.type === 'CIKIS' || evt.type === 'OTO_CIKIS') empState = 0;
+    const docRef = db.collection('employees').doc(safeDocId);
 
     try {
-      await db.collection('employees').doc(safeDocId).set({
+      const snap = await docRef.get();
+      if (snap.exists) {
+        // Doküman Firestore'da zaten mevcut, kesinlikle üzerine yazma!
+        continue;
+      }
+
+      let empState = 0;
+      if (evt.type === 'GIRIS' || evt.type === 'MOLA_BIT') empState = 1;
+      else if (evt.type === 'MOLA_BAS') empState = 2;
+      else if (evt.type === 'CIKIS' || evt.type === 'OTO_CIKIS') empState = 0;
+
+      await docRef.set({
         uid: evt.uid,
         name: evt.employeeName || `Personel_${evt.uid.slice(-5)}`,
         state: empState,
@@ -786,8 +798,8 @@ async function syncMissingEmployeesFromEvents(eventsList) {
         hasCustomShift: false,
         lastUpdate: evt.timestamp || Math.floor(Date.now() / 1000),
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      console.log(`[Otomatik Eşitleme] Eksik personel employees koleksiyonuna eklendi: ${evt.uid} (${evt.employeeName})`);
+      });
+      console.log(`[Otomatik Eşitleme] Yeni eksik personel employees koleksiyonuna eklendi: ${evt.uid} (${evt.employeeName})`);
     } catch (err) {
       console.error('[Otomatik personel ekleme hatası]', err);
     }
@@ -1222,7 +1234,7 @@ if (formEditEmployee) {
     }
 
     try {
-      await db.collection('employees').doc(docId).update(updateFields);
+      await db.collection('employees').doc(docId).set(updateFields, { merge: true });
 
       showToast('Personel bilgisi güncellendi.', 'success');
       closeModal('modal-edit-employee');
