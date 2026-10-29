@@ -1762,3 +1762,47 @@ if (settingsDeviceForm) {
 document.addEventListener('DOMContentLoaded', () => {
   setupAuthListener();
 });
+
+
+// =============================================================================
+// 11. BULUTTAN UZAKTAN FIRMWARE YUKLEME (CLOUD OTA)
+// =============================================================================
+const settingsFirmwareForm = document.getElementById('settings-firmware-form');
+if (settingsFirmwareForm) {
+  settingsFirmwareForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const targetVer = parseInt(document.getElementById('firmware-target-version').value.trim(), 10);
+    const binUrl = document.getElementById('firmware-bin-url').value.trim();
+    const spinner = document.getElementById('save-firmware-spinner');
+    const submitBtn = document.getElementById('save-firmware-btn');
+
+    if (!db) return;
+    if (isNaN(targetVer) || targetVer <= 100) {
+      showToast('Hedef sürüm numarası 100\'den büyük olmalıdır (örn: 101).', 'warning');
+      return;
+    }
+    if (!binUrl.startsWith('http://') && !binUrl.startsWith('https://')) {
+      showToast('Geçerli bir HTTP veya HTTPS dosya linki giriniz.', 'warning');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    spinner.classList.remove('hidden');
+
+    try {
+      await db.collection('settings').doc('main').set({
+        firmwareTargetVersion: targetVer,
+        firmwareUrl: binUrl,
+        firmwareRequestedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      showToast(`Yeni firmware emri (v${targetVer}) cihaza iletildi! Cihaz otomatik indirip güncellenecektir.`, 'success');
+    } catch (err) {
+      console.error('[Cloud OTA Emri Hatası]', err);
+      showToast('Firmware emri gönderilemedi: ' + err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+      spinner.classList.remove('hidden');
+    }
+  });
+}

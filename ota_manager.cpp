@@ -3,6 +3,10 @@
 #include <ArduinoOTA.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include "display_manager.h"
+#include "touch_ui.h"
 
 // Web tabanli OTA guncellemesi icin port 80 sunucusu
 static WebServer otaServer(80);
@@ -100,4 +104,119 @@ void otaTick() {
       otaServer.handleClient();
     }
   }
+}
+
+// =============================================================================
+// Cloud OTA - Web Panelden Verilen URL ile Uzaktan Indirip Flashlama
+// =============================================================================
+bool otaPerformCloudUpdate(const char* binUrl) {
+  if (!binUrl || strlen(binUrl) < 10) return false;
+  if (!wifiIsConnected()) {
+    Serial.println("[Cloud OTA] Hata: WiFi baglantisi yok.");
+    return false;
+  }
+
+  Serial.println("\n[Cloud OTA] ========================================");
+  Serial.printf("[Cloud OTA] Uzaktan indirme baslatiliyor: %s\n", binUrl);
+
+  // Ekranda guncelleme durumunu goster
+  uiDrawInfoScreen("", "Firmware Indiriliyor...", 0x2F18);
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(25000); // 25 saniye zaman asimi
+
+  bool isHttps = strncmp(binUrl, "https://", 8) == 0;
+  if (isHttps) {
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure(); // SSL sertifika dogrulamasini esnek tut
+    if (!http.begin(secureClient, binUrl)) {
+      Serial.println("[Cloud OTA] HTTPS baglanti baslatilamadi!");
+      uiDrawErrorScreen("OTA Baglanti Hatasi");
+      return false;
+    }
+  } else {
+    WiFiClient client;
+    if (!http.begin(client, binUrl)) {
+      Serial.println("[Cloud OTA] HTTP baglanti baslatilamadi!");
+      uiDrawErrorScreen("OTA Baglanti Hatasi");
+      return false;
+    }
+  }
+
+  int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("[Cloud OTA] HTTP Hatasi: %d\n", httpCode);
+    http.end();
+    uiDrawErrorScreen("Yazilim Indirilemedi");
+    return false;
+  }
+
+  int contentLength = http.getSize();
+  Serial.printf("[Cloud OTA] Firmware dosya boyutu: %d bayt\n", contentLength);
+
+  if (contentLength <= 0) {
+    Serial.println("[Cloud OTA] Gecersiz dosya boyutu!");
+    http.end();
+    uiDrawErrorScreen("Hatali Dosya Boyutu");
+    return false;
+  }
+
+  bool canBegin = Update.begin(contentLength);
+  if (!canBegin) {
+    Serial.println("[Cloud OTA] Update.begin basarisiz! Flash alani yetersiz.");
+    http.end();
+    uiDrawErrorScreen("Yetersiz Flash Alani");
+    return false;
+  }
+
+  WiFiClient* stream = http.getStreamPtr();
+  size_t written = 0;
+  uint8_t buff[1024];
+  int lastProgress = -1;
+
+  while (http.connected() && (written < (size_t)contentLength)) {
+    size_t availableBytes = stream->available();
+    if (availableBytes) {
+      int readBytes = stream->readBytes(buff, ((availableBytes > sizeof(buff)) ? sizeof(buff) : availableBytes));
+      written += Update.write(buff, readBytes);
+
+      int progress = (written * 100) / contentLength;
+      if (progress != lastProgress && progress % 10 == 0) {
+        lastProgress = progress;
+        Serial.printf("[Cloud OTA] Ilerleme: %%%d\n", progress);
+        char pMsg[32];
+        snprintf(pMsg, sizeof(pMsg), "Guncelleniyor: %%%d", progress);
+        uiDrawInfoScreen("", pMsg, 0x2F18);
+      }
+    }
+    delay(1);
+  }
+
+  http.end();
+
+  if (written != (size_t)contentLength) {
+    Serial.printf("[Cloud OTA] Yazma eksik kaldi: %d / %d bayt\n", written, contentLength);
+    Update.abort();
+    uiDrawErrorScreen("Guncelleme Yarida Kaldi");
+    return false;
+  }
+
+  if (!Update.end()) {
+    Serial.printf("[Cloud OTA] Update.end hatasi #: %d\n", Update.getError());
+    uiDrawErrorScreen("Yazilim Dogrulanamadi");
+    return false;
+  }
+
+  if (!Update.isFinished()) {
+    Serial.println("[Cloud OTA] Guncelleme tam olarak sonlanmadi!");
+    uiDrawErrorScreen("Bitis Hatasi");
+    return false;
+  }
+
+  Serial.println("[Cloud OTA] TEBRIKLER! Firmware basariyla yuklendi.");
+  uiDrawInfoScreen("", "Yazilim Tamam! Yeniden Baslatiliyor...", 0x07E0);
+  delay(1500);
+  ESP.restart();
+  return true;
 }

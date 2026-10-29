@@ -5,6 +5,7 @@
 #include "employee_manager.h"
 #include "event_logger.h"
 #include "system_controller.h"
+#include "ota_manager.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -415,6 +416,21 @@ void syncDownloadSettings() {
   Serial.printf("[SYNC] Ayarlar indirildi - Mesai: %02d:%02d-%02d:%02d\n",
                 newShift.startHour, newShift.startMinute,
                 newShift.endHour, newShift.endMinute);
+
+  // BULUTTAN FIRMWARE GUNCELLEME KONTROLU (Cloud OTA)
+  if (fields.containsKey("firmwareTargetVersion") && fields.containsKey("firmwareUrl")) {
+    int targetVer = 0;
+    const char* verStr = fields["firmwareTargetVersion"]["integerValue"] | "";
+    if (strlen(verStr) > 0) targetVer = atoi(verStr);
+    const char* binUrl = fields["firmwareUrl"]["stringValue"] | "";
+
+    if (targetVer > CURRENT_FIRMWARE_VERSION && strlen(binUrl) > 10) {
+      Serial.printf("[Cloud OTA] Yeni firmware tespit edildi! Hedef surum: %d (Mevcut: %d)\n",
+                    targetVer, CURRENT_FIRMWARE_VERSION);
+      Serial.printf("[Cloud OTA] Indirme adresi: %s\n", binUrl);
+      otaPerformCloudUpdate(binUrl);
+    }
+  }
 }
 
 // ==========================================

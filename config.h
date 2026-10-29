@@ -141,7 +141,10 @@ enum ScreenState : uint8_t {
 // Senkronizasyon araliklari (ms)
 #define SYNC_EVENT_INTERVAL     30000    // 30 saniye - olay yukleme
 #define SYNC_EMPLOYEE_INTERVAL  300000   // 5 dakika - personel indirme
-#define SYNC_SETTINGS_INTERVAL  600000   // 10 dakika - ayar indirme
+#define SYNC_SETTINGS_INTERVAL  60000    // 1 dakika - ayar ve firmware guncelleme kontrolu
+
+// Mevcut cihaz yazilim surumu
+#define CURRENT_FIRMWARE_VERSION 100     // v1.0.0 (ornegin 101 = v1.0.1)
 
 // ==========================================
 // VERI YAPILARI

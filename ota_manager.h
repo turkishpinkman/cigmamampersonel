@@ -10,3 +10,4 @@
 
 void otaInit();
 void otaTick();
+bool otaPerformCloudUpdate(const char* binUrl); // Buluttan (HTTPS/HTTP) firmware indirip yukleme
