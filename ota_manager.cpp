@@ -8,6 +8,7 @@
 #include <esp_task_wdt.h>
 #include "display_manager.h"
 #include "touch_ui.h"
+#include "buzzer.h"
 
 // Web tabanli OTA guncellemesi icin port 80 sunucusu
 static WebServer otaServer(80);
@@ -39,6 +40,7 @@ void otaInit() {
   ArduinoOTA.setPassword("cigmamam2026"); // Guvenlik sifresi
 
   ArduinoOTA.onStart([]() {
+    buzzerStop();
     String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
     Serial.println("[OTA] Uzaktan guncelleme baslatildi: " + type);
   });
@@ -111,6 +113,7 @@ void otaTick() {
 // Cloud OTA - Web Panelden Verilen URL ile Uzaktan Indirip Flashlama
 // =============================================================================
 bool otaPerformCloudUpdate(const char* binUrl) {
+  buzzerStop();
   if (!binUrl || strlen(binUrl) < 10) return false;
   if (!wifiIsConnected()) {
     Serial.println("[Cloud OTA] Hata: WiFi baglantisi yok.");

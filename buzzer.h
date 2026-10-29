@@ -8,6 +8,7 @@
 // ============================================================================
 
 void buzzerInit();
+void buzzerStop();      // Buzzer sesini aninda keser ve pini susturur
 void buzzerSuccess();   // Tek kisa bip (basarili islem)
 void buzzerError();     // Uc kisa bip (hata)
 void buzzerWarning();   // Iki kisa bip (uyari)

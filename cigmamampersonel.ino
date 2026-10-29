@@ -130,6 +130,10 @@ static void handleSerialCommands() {
 // SETUP - BASLANGIC YAPILANDIRMASI
 // =============================================================================
 void setup() {
+  // Buzzer pinini ILK ANDA cikis ve LOW yap (acilista ve yukleme sirasinda ses cikmasini onle)
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
   Serial.begin(115200);
   delay(500); // Boot ve guc stabilizasyonu
 
@@ -219,9 +223,6 @@ void setup() {
   Serial.println();
   Serial.println(F("Sistem hazir!"));
   Serial.println(F("================================"));
-
-  // Acilista uzun/gereksiz bip kaldirildi (sadece 30ms mini tiklama sesi)
-  buzzerSuccess();
 }
 
 // =============================================================================

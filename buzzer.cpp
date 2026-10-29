@@ -28,6 +28,9 @@ static void startPattern(const uint16_t* pattern, uint8_t count) {
 }
 
 void buzzerInit() {
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
   // ESP32 LEDC PWM yapilandirmasi (8-bit cozunurluk)
   ledcSetup(BUZZER_CHANNEL, BUZZER_FREQ, 8);
   ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
@@ -39,21 +42,30 @@ void buzzerInit() {
   beepStartTime = 0;
 }
 
+void buzzerStop() {
+  ledcWriteTone(BUZZER_CHANNEL, 0);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  isBeeping = false;
+  beepCount = 0;
+  beepIndex = 0;
+}
+
 void buzzerSuccess() {
-  // Basarili islem: Yumusak, cok kisa kibar bip (35ms)
-  static const uint16_t successPattern[] = {35};
+  // Basarili islem: Cok kisa ve hafif bir tiklama sesi (25ms)
+  static const uint16_t successPattern[] = {25};
   startPattern(successPattern, 1);
 }
 
 void buzzerError() {
-  // Hata bildirimi: 50ms ON, 50ms OFF, 50ms ON
-  static const uint16_t errorPattern[] = {50, 50, 50};
+  // Hata bildirimi: Kisa iki uyari sesi (30ms ON, 30ms OFF, 30ms ON)
+  static const uint16_t errorPattern[] = {30, 30, 30};
   startPattern(errorPattern, 3);
 }
 
 void buzzerWarning() {
-  // Uyari bildirimi: 40ms ON, 40ms OFF, 40ms ON
-  static const uint16_t warningPattern[] = {40, 40, 40};
+  // Uyari bildirimi: Kisa iki bip (25ms ON, 25ms OFF, 25ms ON)
+  static const uint16_t warningPattern[] = {25, 25, 25};
   startPattern(warningPattern, 3);
 }
 
