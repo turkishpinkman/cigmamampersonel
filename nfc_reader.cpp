@@ -8,11 +8,19 @@
 static Adafruit_PN532 pn532(-1, -1);  // I2C modu, IRQ/RESET yok
 static bool _nfcReady = false;
 
+// Kart varlık / basılı tutma kontrol değişkenleri
+static char _presentUID[24] = "";
+static bool _cardCurrentlyPresent = false;
+static uint8_t _absentCount = 0;
+
 // ==========================================
 // nfcInit - PN532'yi baslat ve yapilandir
 // ==========================================
 bool nfcInit() {
   _nfcReady = false;
+  _cardCurrentlyPresent = false;
+  _presentUID[0] = '\0';
+  _absentCount = 0;
   
   // I2C baslatma (ozel pinler)
   Wire.begin(NFC_SDA, NFC_SCL);
@@ -45,7 +53,9 @@ bool nfcInit() {
 }
 
 // ==========================================
-// nfcRead - Kart okuma (100ms timeout)
+// nfcRead - Kart okuma (SADECE kart yeni okutuldugunda true doner)
+// Kart modul uzerinde bekletildigi surece tekrar true DONMEZ!
+// Kartin kaldirilip tekrar yaklastirilmasi gerekir.
 // ==========================================
 bool nfcRead(char* uidBuf, size_t bufLen) {
   if (!_nfcReady || bufLen < 12) return false;
@@ -53,29 +63,35 @@ bool nfcRead(char* uidBuf, size_t bufLen) {
   uint8_t uid[7] = {0};
   uint8_t uidLength = 0;
   
-  // 500ms timeout ile kart ara (test kodundaki calisir deger)
+  // 200ms timeout ile kart ara
   bool success = pn532.readPassiveTargetID(
     PN532_MIFARE_ISO14443A, 
     uid, 
     &uidLength, 
-    500  // 500ms timeout - kararli okuma icin gerekli
+    200  // 200ms timeout - kararli ve hizli
   );
   
   if (!success || uidLength == 0) {
+    // Kart bulunamadi -> yokluk sayacini artir
+    _absentCount++;
+    // Ardisik 2 okumada kart yoksa, artik kartin tamamen kaldirildigina emin ol
+    if (_absentCount >= 2) {
+      if (_cardCurrentlyPresent) {
+        Serial.println(F("[NFC] Kart modülden kaldirildi."));
+      }
+      _cardCurrentlyPresent = false;
+      _presentUID[0] = '\0';
+      _absentCount = 0;
+    }
     return false;
   }
+  
+  // Kart bulundu -> yokluk sayacini sifirla
+  _absentCount = 0;
   
   // UID byte'larini hex string'e donustur
-  // Ornek: 4 byte -> "AA:BB:CC:DD" (11 karakter + null)
-  // Ornek: 7 byte -> "AA:BB:CC:DD:EE:FF:GG" (20 karakter + null)
-  
-  size_t needed = uidLength * 3;  // "XX:" formatinda her byte 3 karakter
-  if (needed > bufLen) {
-    Serial.println("[NFC] UID buffer yetersiz!");
-    return false;
-  }
-  
-  char* ptr = uidBuf;
+  char currentUID[24];
+  char* ptr = currentUID;
   for (uint8_t i = 0; i < uidLength; i++) {
     if (i > 0) {
       *ptr++ = ':';
@@ -84,10 +100,39 @@ bool nfcRead(char* uidBuf, size_t bufLen) {
     ptr += 2;
   }
   *ptr = '\0';
+
+  // KONTROL: Kart modül üzerinde bekletiliyor mu?
+  if (_cardCurrentlyPresent && strcmp(_presentUID, currentUID) == 0) {
+    // Ayni kart hala okuyucu uzerinde tutuluyor, tekrar tetikleme!
+    return false;
+  }
   
-  Serial.printf("[NFC] Kart okundu: %s (%d byte)\n", uidBuf, uidLength);
+  // Yeni bir kart veya kaldirilip tekrar basilan kart!
+  _cardCurrentlyPresent = true;
+  strncpy(_presentUID, currentUID, sizeof(_presentUID) - 1);
+  _presentUID[sizeof(_presentUID) - 1] = '\0';
   
+  strncpy(uidBuf, currentUID, bufLen - 1);
+  uidBuf[bufLen - 1] = '\0';
+  
+  Serial.printf("[NFC] Yeni kart basimi: %s (%d byte)\n", uidBuf, uidLength);
   return true;
+}
+
+// ==========================================
+// nfcResetPresence - Kart algilama durumunu sifirlar
+// ==========================================
+void nfcResetPresence() {
+  _cardCurrentlyPresent = false;
+  _presentUID[0] = '\0';
+  _absentCount = 0;
+}
+
+// ==========================================
+// nfcIsCardPresent - Su an bir kart modül üzerinde mi?
+// ==========================================
+bool nfcIsCardPresent() {
+  return _cardCurrentlyPresent;
 }
 
 // ==========================================
