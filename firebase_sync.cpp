@@ -445,6 +445,29 @@ void syncUploadNewEmployee(const char* uid, const char* name) {
 }
 
 // ==========================================
+// syncUploadAllEmployees - Tum personelleri yukle
+// ==========================================
+void syncUploadAllEmployees() {
+  if (!wifiIsConnected() || !_ensureAuth()) return;
+
+  int total = employeeGetTotalSlots();
+  Employee* emps = employeeGetAll();
+  if (!emps) return;
+
+  int count = 0;
+  for (int i = 0; i < total; i++) {
+    if (emps[i].uid[0] != '\0' && emps[i].active) {
+      syncUploadNewEmployee(emps[i].uid, emps[i].name);
+      count++;
+      delay(150);
+    }
+  }
+  if (count > 0) {
+    Serial.printf("[SYNC] Toplam %d personel Firestore'a esitlendi.\n", count);
+  }
+}
+
+// ==========================================
 // syncUploadEmployeeState - Durum guncelle
 // ==========================================
 void syncUploadEmployeeState(const char* uid, EmployeeState state) {
@@ -498,7 +521,8 @@ void syncTick() {
   // Personel listesi indirme (5 dakikada bir)
   if (now - _lastEmployeeSync > SYNC_EMPLOYEE_INTERVAL || _lastEmployeeSync == 0) {
     _lastEmployeeSync = now;
-    syncDownloadEmployees();
+    syncUploadAllEmployees();   // Once cihazdaki kayitli personelleri Firestore'a gonder
+    syncDownloadEmployees();    // Sonra Firestore'daki degisiklikleri cek
   }
 
   // Ayar indirme (10 dakikada bir)

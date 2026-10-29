@@ -88,6 +88,11 @@ static void handleSerialCommands() {
           }
         } else if (strcmp(_serialBuffer, "status") == 0) {
           systemPrintStatus();
+        } else if (strcmp(_serialBuffer, "sync") == 0) {
+          Serial.println(F("[SERI] Manuel sync tetiklendi..."));
+          syncUploadAllEmployees();
+          syncUploadPendingEvents();
+          Serial.println(F("[SERI] Sync tamamlandi."));
         } else if (strcmp(_serialBuffer, "employees") == 0) {
           int total = employeeGetTotalSlots();
           Employee* list = employeeGetAll();
