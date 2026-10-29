@@ -123,28 +123,44 @@ bool otaPerformCloudUpdate(const char* binUrl) {
   uiDrawInfoScreen("", "Firmware Indiriliyor...", 0x2F18);
 
   HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setTimeout(25000); // 25 saniye zaman asimi
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setTimeout(30000); // 30 saniye zaman asimi
 
-  bool isHttps = strncmp(binUrl, "https://", 8) == 0;
-  if (isHttps) {
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure(); // SSL sertifika dogrulamasini esnek tut
-    if (!http.begin(secureClient, binUrl)) {
-      Serial.println("[Cloud OTA] HTTPS baglanti baslatilamadi!");
-      uiDrawErrorScreen("OTA Baglanti Hatasi");
-      return false;
-    }
-  } else {
-    WiFiClient client;
-    if (!http.begin(client, binUrl)) {
-      Serial.println("[Cloud OTA] HTTP baglanti baslatilamadi!");
-      uiDrawErrorScreen("OTA Baglanti Hatasi");
-      return false;
+  // GitHub SSL baglantilari ve yonlendirmeler icin dinamik istemci
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure(); // SSL sertifika dogrulamasini esnek tut
+
+  if (!http.begin(secureClient, binUrl)) {
+    Serial.println("[Cloud OTA] HTTPS baglanti baslatilamadi!");
+    uiDrawErrorScreen("OTA Baglanti Hatasi");
+    return false;
+  }
+
+  // GitHub User-Agent basligi zorunludur
+  http.addHeader("User-Agent", "ESP32-HTTP-OTA");
+
+  const char* headerKeys[] = {"Location", "Content-Length", "Content-Type"};
+  http.collectHeaders(headerKeys, 3);
+
+  int httpCode = http.GET();
+
+  // Eger GitHub 302/301 ile AWS/Azure blob depolama adresine yonlendiriyorsa
+  if (httpCode == HTTP_CODE_FOUND || httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == 307 || httpCode == 308) {
+    String redirectUrl = http.header("Location");
+    Serial.printf("[Cloud OTA] Yonlendirme tespit edildi -> %s\n", redirectUrl.c_str());
+    http.end();
+
+    if (redirectUrl.length() > 0) {
+      if (!http.begin(secureClient, redirectUrl)) {
+        Serial.println("[Cloud OTA] Yonlendirme adresine baglanilamadi!");
+        uiDrawErrorScreen("Yonlendirme Hatasi");
+        return false;
+      }
+      http.addHeader("User-Agent", "ESP32-HTTP-OTA");
+      httpCode = http.GET();
     }
   }
 
-  int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
     Serial.printf("[Cloud OTA] HTTP Hatasi: %d\n", httpCode);
     http.end();
