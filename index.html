@@ -522,6 +522,7 @@
                     <th scope="col" class="py-3.5 px-4 text-center w-12">#</th>
                     <th scope="col" class="py-3.5 px-4">Personel Adı Soyadı</th>
                     <th scope="col" class="py-3.5 px-4">NFC / Kart UID</th>
+                    <th scope="col" class="py-3.5 px-4">Mesai Saati</th>
                     <th scope="col" class="py-3.5 px-4">Anlık Durum</th>
                     <th scope="col" class="py-3.5 px-4">Son İşlem Zamanı</th>
                     <th scope="col" class="py-3.5 px-4 text-right">İşlemler</th>
@@ -1162,6 +1163,28 @@
           <p class="text-[11px] text-slate-400 mt-1.5">Terminal ekranında veya seri port monitöründe görünen kart kimliği.</p>
         </div>
 
+        <!-- Özel Mesai Saati Ayarı -->
+        <div class="pt-3 border-t border-slate-100">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-700">Özel Mesai Saati Kullan</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="add-emp-custom-shift-toggle" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Kapalıyken genel ayarlardaki mesai saatleri geçerlidir.</p>
+          <div id="add-emp-custom-shift-inputs" class="grid grid-cols-2 gap-3 mt-3 hidden">
+            <div>
+              <label for="add-emp-shift-start" class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Başlangıç</label>
+              <input type="time" id="add-emp-shift-start" value="08:00" class="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="add-emp-shift-end" class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Bitiş</label>
+              <input type="time" id="add-emp-shift-end" value="17:00" class="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+        </div>
+
         <div class="pt-4 flex items-center justify-end space-x-3 border-t border-slate-100">
           <button 
             type="button" 
@@ -1233,6 +1256,28 @@
             placeholder="Ad Soyad"
             class="w-full py-2.5 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
           >
+        </div>
+
+        <!-- Özel Mesai Saati Ayarı -->
+        <div class="pt-3 border-t border-slate-100">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-700">Özel Mesai Saati Kullan</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="edit-emp-custom-shift-toggle" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">Kapalıyken genel ayarlardaki mesai saatleri geçerlidir.</p>
+          <div id="edit-emp-custom-shift-inputs" class="grid grid-cols-2 gap-3 mt-3 hidden">
+            <div>
+              <label for="edit-emp-shift-start" class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Başlangıç</label>
+              <input type="time" id="edit-emp-shift-start" value="08:00" class="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label for="edit-emp-shift-end" class="block text-[11px] font-bold text-slate-600 uppercase mb-1">Bitiş</label>
+              <input type="time" id="edit-emp-shift-end" value="17:00" class="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
         </div>
 
         <div class="pt-4 flex items-center justify-end space-x-3 border-t border-slate-100">
