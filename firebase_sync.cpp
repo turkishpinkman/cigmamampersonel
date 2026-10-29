@@ -418,17 +418,38 @@ void syncDownloadSettings() {
                 newShift.endHour, newShift.endMinute);
 
   // BULUTTAN FIRMWARE GUNCELLEME KONTROLU (Cloud OTA)
+  // SADECE ve SADECE web panelinden yeni bir guncelleme emri verildiginde calisir.
+  // Bir kez yuklenen surum cihazin flash'ina (/ota_version.txt) kaydedilir ve
+  // ayni surum veya eski surum icin ASLA tekrar indirme yapilmaz.
   if (fields.containsKey("firmwareTargetVersion") && fields.containsKey("firmwareUrl")) {
     int targetVer = 0;
     const char* verStr = fields["firmwareTargetVersion"]["integerValue"] | "";
     if (strlen(verStr) > 0) targetVer = atoi(verStr);
     const char* binUrl = fields["firmwareUrl"]["stringValue"] | "";
 
-    if (targetVer > CURRENT_FIRMWARE_VERSION && strlen(binUrl) > 10) {
-      Serial.printf("[Cloud OTA] Yeni firmware tespit edildi! Hedef surum: %d (Mevcut: %d)\n",
-                    targetVer, CURRENT_FIRMWARE_VERSION);
+    // Cihazin daha once bu surumu yukleyip yuklemedigini flash'tan kontrol et
+    int installedVersion = CURRENT_FIRMWARE_VERSION;
+    if (storageExists("/ota_version.txt")) {
+      String savedVer = storageRead("/ota_version.txt");
+      int sVal = savedVer.toInt();
+      if (sVal > installedVersion) installedVersion = sVal;
+    }
+
+    // Sadece hedef surum cihazin yuklu surumunden kesin olarak buyukse ve URL gecerliyse
+    if (targetVer > installedVersion && strlen(binUrl) > 10) {
+      Serial.printf("[Cloud OTA] Web panelinden yeni guncelleme emri alindi! Hedef: %d (Mevcut: %d)\n",
+                    targetVer, installedVersion);
       Serial.printf("[Cloud OTA] Indirme adresi: %s\n", binUrl);
-      otaPerformCloudUpdate(binUrl);
+
+      // Once bu surum numarasini cihaza isle (tekrar donguye girmesin)
+      storageWrite("/ota_version.txt", String(targetVer));
+
+      // Indirme ve flashlama islemini baslat
+      bool success = otaPerformCloudUpdate(binUrl);
+      if (!success) {
+        // Eger indirme basarisiz olursa flash'taki kaydi eski haline cevir
+        storageWrite("/ota_version.txt", String(installedVersion));
+      }
     }
   }
 }
