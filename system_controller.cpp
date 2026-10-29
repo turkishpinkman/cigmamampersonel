@@ -496,8 +496,7 @@ void systemHandleTouch(int16_t x, int16_t y) {
                     uiDrawEmployeeList(employeeGetAll(), employeeGetTotalSlots(), _listPage);
                 }
             } else if (choice == -3) { // Sonraki sayfa
-                int totalSlots = employeeGetTotalSlots();
-                int maxPages = (totalSlots + 4) / 5;
+                int maxPages = (employeeCount() + 3) / 4;
                 if (_listPage + 1 < maxPages) {
                     _listPage++;
                     uiDrawEmployeeList(employeeGetAll(), employeeGetTotalSlots(), _listPage);
@@ -514,6 +513,10 @@ void systemHandleTouch(int16_t x, int16_t y) {
                     employeeRemove(_deleteIndex);
                     buzzerSuccess();
                     _deleteIndex = -1;
+                    int maxPages = (employeeCount() + 3) / 4;
+                    if (_listPage >= maxPages && _listPage > 0) {
+                        _listPage = maxPages > 0 ? maxPages - 1 : 0;
+                    }
                     uiDrawEmployeeList(employeeGetAll(), employeeGetTotalSlots(), _listPage);
                 } else if (dc == 2) { // HAYIR - Iptal
                     _deleteIndex = -1;
@@ -539,8 +542,7 @@ void systemHandleTouch(int16_t x, int16_t y) {
                         uiDrawEmployeeList(employeeGetAll(), employeeGetTotalSlots(), _listPage);
                     }
                 } else if (choice == -3) { // Sonraki sayfa
-                    int totalSlots = employeeGetTotalSlots();
-                    int maxPages = (totalSlots + 4) / 5;
+                    int maxPages = (employeeCount() + 3) / 4;
                     if (_listPage + 1 < maxPages) {
                         _listPage++;
                         uiDrawEmployeeList(employeeGetAll(), employeeGetTotalSlots(), _listPage);
@@ -585,14 +587,14 @@ void systemHandleTouch(int16_t x, int16_t y) {
             break;
 
         case SCR_MAIN:
-            // Ana ekrandaki "+ EKLE" butonuna dokunuldu mu?
+            // Ana ekrandaki "+ PERSONEL" butonuna dokunuldu mu?
             if (uiCheckRegisterButtonTouch(x, y)) {
                 _currentScreen = SCR_REGISTER_CARD;
                 _screenTimer = millis();
                 uiDrawRegisterCardScreen();
                 buzzerSuccess();
             }
-            // Ana ekrandaki "SYNC" butonuna dokunuldu mu?
+            // Ana ekrandaki "SENKRONIZE" butonuna dokunuldu mu?
             else if (uiCheckSyncButtonTouch(x, y)) {
                 buzzerSuccess();
                 uiDrawInfoScreen("", "Senkronize Ediliyor...", 0x03E0);
@@ -613,8 +615,8 @@ void systemHandleTouch(int16_t x, int16_t y) {
             break;
 
         case SCR_REGISTER_CARD:
-            // Iptal butonu (90, 185, 140x35)
-            if (x >= 86 && x <= 234 && y >= 181 && y <= 224) {
+            // Iptal butonu (80, 192, 160x36) dokunma alani
+            if (x >= 75 && x <= 245 && y >= 186 && y <= 232) {
                 buzzerWarning();
                 _returnToMain();
             }
