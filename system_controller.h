@@ -16,4 +16,6 @@ bool systemIsProcessing();                       // Islem devam ediyor mu bilgis
 // Seri port ve harici yapilandirma yardimcilari
 void systemSetWifi(const char* ssid, const char* pass);
 void systemSetAdminUID(const char* uid);
+void systemSetShift(const ShiftConfig& shift);
+ShiftConfig systemGetShift();
 void systemPrintStatus();

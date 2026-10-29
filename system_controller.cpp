@@ -171,9 +171,14 @@ static void _autoCheckoutAll() {
     for (int i = 0; i < totalSlots; i++) {
         if (!all[i].active) continue;
         if (all[i].state == STATE_MOLADA || all[i].state == STATE_CALISIYOR) {
-            employeeSetState(i, STATE_DISARIDA, checkoutTime);
-            eventLog(all[i].uid, all[i].name, EVT_OTO_CIKIS, checkoutTime);
-            Serial.printf("[SYSTEM] Otomatik cikis yapildi: %s (%s)\n", all[i].name, all[i].uid);
+            ShiftConfig activeShift = all[i].hasCustomShift ? all[i].customShift : _config.shift;
+            int empShiftEndMin = activeShift.endHour * 60 + activeShift.endMinute;
+            if (currentMin >= empShiftEndMin) {
+                employeeSetState(i, STATE_DISARIDA, checkoutTime);
+                eventLog(all[i].uid, all[i].name, EVT_OTO_CIKIS, checkoutTime);
+                Serial.printf("[SYSTEM] Otomatik cikis yapildi: %s (%s) [Mesai: %02d:%02d]\n",
+                              all[i].name, all[i].uid, activeShift.endHour, activeShift.endMinute);
+            }
         }
     }
 }
@@ -331,15 +336,16 @@ void systemHandleCard(const char* uid) {
                 uint8_t curH = timeGetHour();
                 uint8_t curM = timeGetMinute();
                 int currentMins = curH * 60 + curM;
-                int shiftStartMins = _config.shift.startHour * 60 + _config.shift.startMinute;
-                int shiftEndMins = _config.shift.endHour * 60 + _config.shift.endMinute;
+                ShiftConfig activeShift = emp->hasCustomShift ? emp->customShift : _config.shift;
+                int shiftStartMins = activeShift.startHour * 60 + activeShift.startMinute;
+                int shiftEndMins = activeShift.endHour * 60 + activeShift.endMinute;
                 int earliestAllowed = shiftStartMins - SHIFT_START_EARLY_TOLERANCE;
 
                 // 1. Kural: Mesai baslangicindan 30 dakikadan daha erken mi gelindi?
                 if (currentMins < earliestAllowed) {
                     char errBuf[48];
                     snprintf(errBuf, sizeof(errBuf), "Erken! Baslangic %02d:%02d", 
-                             _config.shift.startHour, _config.shift.startMinute);
+                             activeShift.startHour, activeShift.startMinute);
                     uiDrawErrorScreen(errBuf);
                     buzzerError();
                     _currentScreen = SCR_INFO;
@@ -400,10 +406,12 @@ void systemHandleTouch(int16_t x, int16_t y) {
                 uint8_t h = timeGetHour();
                 uint8_t m = timeGetMinute();
                 int currentMin = h * 60 + m;
-                int shiftEndMin = _config.shift.endHour * 60 + _config.shift.endMinute;
 
                 Employee* emp = employeeGet(_selectedEmployee);
                 if (emp != nullptr) {
+                    ShiftConfig activeShift = emp->hasCustomShift ? emp->customShift : _config.shift;
+                    int shiftEndMin = activeShift.endHour * 60 + activeShift.endMinute;
+
                     // Mesai bitimine yakin mola istegi -> Otomatik Cikis olarak isle
                     if ((shiftEndMin - currentMin <= SHIFT_END_TOLERANCE) && (shiftEndMin - currentMin >= 0)) {
                         employeeSetState(_selectedEmployee, STATE_DISARIDA, timeNow());
@@ -691,14 +699,7 @@ void systemTick() {
 
     // 3. MESAI BITIS OTOMATIK CIKIS KONTROLU:
     if (timeIsValid()) {
-        uint8_t h = timeGetHour();
-        uint8_t m = timeGetMinute();
-        int currentMin = h * 60 + m;
-        int shiftEndMin = _config.shift.endHour * 60 + _config.shift.endMinute;
-
-        if (currentMin == shiftEndMin) {
-            _autoCheckoutAll();
-        }
+        _autoCheckoutAll();
     }
 
     // 4. GUNLUK SIFIRLAMA KONTROLU (Gece yarisi yeni gune gecis):
@@ -747,6 +748,18 @@ void systemSetAdminUID(const char* uid) {
         _saveConfig();
         Serial.printf("[SYSTEM] Admin UID guncellendi: %s\n", _config.adminUID);
     }
+}
+
+void systemSetShift(const ShiftConfig& shift) {
+    _config.shift = shift;
+    _saveConfig();
+    Serial.printf("[SYSTEM] Yeni mesai saatleri kaydedildi: %02d:%02d - %02d:%02d\n",
+                  _config.shift.startHour, _config.shift.startMinute,
+                  _config.shift.endHour, _config.shift.endMinute);
+}
+
+ShiftConfig systemGetShift() {
+    return _config.shift;
 }
 
 void systemPrintStatus() {

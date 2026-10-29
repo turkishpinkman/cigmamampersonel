@@ -340,6 +340,26 @@ void syncDownloadEmployees() {
     const char* uid = fields["uid"]["stringValue"] | "";
     const char* name = fields["name"]["stringValue"] | "";
     bool active = fields["active"]["booleanValue"] | true;
+    bool hasCustomShift = fields["hasCustomShift"]["booleanValue"] | false;
+    ShiftConfig customShift = {8, 0, 17, 0};
+    if (hasCustomShift) {
+      if (fields.containsKey("shiftStartHour")) {
+        const char* val = fields["shiftStartHour"]["integerValue"] | "";
+        if (strlen(val) > 0) customShift.startHour = atoi(val);
+      }
+      if (fields.containsKey("shiftStartMinute")) {
+        const char* val = fields["shiftStartMinute"]["integerValue"] | "";
+        if (strlen(val) > 0) customShift.startMinute = atoi(val);
+      }
+      if (fields.containsKey("shiftEndHour")) {
+        const char* val = fields["shiftEndHour"]["integerValue"] | "";
+        if (strlen(val) > 0) customShift.endHour = atoi(val);
+      }
+      if (fields.containsKey("shiftEndMinute")) {
+        const char* val = fields["shiftEndMinute"]["integerValue"] | "";
+        if (strlen(val) > 0) customShift.endMinute = atoi(val);
+      }
+    }
 
     if (strlen(uid) == 0) continue;
 
@@ -347,7 +367,17 @@ void syncDownloadEmployees() {
     if (idx == -1 && active) {
       // Yeni personel - yerel listeye ekle
       if (employeeAdd(uid, name)) {
-        Serial.printf("[SYNC] Yeni personel eklendi: %s (%s)\n", name, uid);
+        int newIdx = employeeFind(uid);
+        if (newIdx >= 0) {
+          Employee* e = employeeGet(newIdx);
+          if (e) {
+            e->hasCustomShift = hasCustomShift;
+            e->customShift = customShift;
+            employeeSave();
+          }
+        }
+        Serial.printf("[SYNC] Yeni personel eklendi: %s (%s) [Ozel Mesai: %s]\n",
+                      name, uid, hasCustomShift ? "EVET" : "HAYIR");
         synced++;
       }
     } else if (idx >= 0 && !active) {
@@ -356,12 +386,31 @@ void syncDownloadEmployees() {
       Serial.printf("[SYNC] Personel silindi: %s\n", uid);
       synced++;
     } else if (idx >= 0) {
-      // Mevcut personel - isim guncellemesi kontrolu
+      // Mevcut personel - isim veya ozel mesai guncellemesi kontrolu
       Employee* emp = employeeGet(idx);
-      if (emp && strcmp(emp->name, name) != 0) {
-        strncpy(emp->name, name, sizeof(emp->name) - 1);
-        employeeSave();
-        synced++;
+      if (emp) {
+        bool changed = false;
+        if (strcmp(emp->name, name) != 0) {
+          strncpy(emp->name, name, sizeof(emp->name) - 1);
+          changed = true;
+        }
+        if (emp->hasCustomShift != hasCustomShift) {
+          emp->hasCustomShift = hasCustomShift;
+          changed = true;
+        }
+        if (hasCustomShift) {
+          if (emp->customShift.startHour != customShift.startHour ||
+              emp->customShift.startMinute != customShift.startMinute ||
+              emp->customShift.endHour != customShift.endHour ||
+              emp->customShift.endMinute != customShift.endMinute) {
+            emp->customShift = customShift;
+            changed = true;
+          }
+        }
+        if (changed) {
+          employeeSave();
+          synced++;
+        }
       }
     }
   }
@@ -391,31 +440,54 @@ void syncDownloadSettings() {
   if (fields.isNull()) return;
 
   // Mesai saatlerini guncelle
-  bool changed = false;
-  ShiftConfig newShift;
+  ShiftConfig currentShift = systemGetShift();
+  ShiftConfig newShift = currentShift;
+  bool shiftDownloaded = false;
 
   // Integer degerlerini Firestore formatindan cikart
   // Firestore integerValue string olarak gelir
   if (fields.containsKey("shiftStartHour")) {
     const char* val = fields["shiftStartHour"]["integerValue"] | "";
-    if (strlen(val) > 0) newShift.startHour = atoi(val);
+    if (strlen(val) > 0) {
+      newShift.startHour = atoi(val);
+      shiftDownloaded = true;
+    }
   }
   if (fields.containsKey("shiftStartMinute")) {
     const char* val = fields["shiftStartMinute"]["integerValue"] | "";
-    if (strlen(val) > 0) newShift.startMinute = atoi(val);
+    if (strlen(val) > 0) {
+      newShift.startMinute = atoi(val);
+      shiftDownloaded = true;
+    }
   }
   if (fields.containsKey("shiftEndHour")) {
     const char* val = fields["shiftEndHour"]["integerValue"] | "";
-    if (strlen(val) > 0) newShift.endHour = atoi(val);
+    if (strlen(val) > 0) {
+      newShift.endHour = atoi(val);
+      shiftDownloaded = true;
+    }
   }
   if (fields.containsKey("shiftEndMinute")) {
     const char* val = fields["shiftEndMinute"]["integerValue"] | "";
-    if (strlen(val) > 0) newShift.endMinute = atoi(val);
+    if (strlen(val) > 0) {
+      newShift.endMinute = atoi(val);
+      shiftDownloaded = true;
+    }
   }
 
-  Serial.printf("[SYNC] Ayarlar indirildi - Mesai: %02d:%02d-%02d:%02d\n",
-                newShift.startHour, newShift.startMinute,
-                newShift.endHour, newShift.endMinute);
+  if (shiftDownloaded && (newShift.startHour != currentShift.startHour ||
+      newShift.startMinute != currentShift.startMinute ||
+      newShift.endHour != currentShift.endHour ||
+      newShift.endMinute != currentShift.endMinute)) {
+    systemSetShift(newShift);
+    Serial.printf("[SYNC] Yeni mesai saatleri sisteme uygulandi ve LittleFS'e kaydedildi: %02d:%02d-%02d:%02d\n",
+                  newShift.startHour, newShift.startMinute,
+                  newShift.endHour, newShift.endMinute);
+  } else {
+    Serial.printf("[SYNC] Ayarlar indirildi - Mesai ayni: %02d:%02d-%02d:%02d\n",
+                  newShift.startHour, newShift.startMinute,
+                  newShift.endHour, newShift.endMinute);
+  }
 
   // BULUTTAN FIRMWARE GUNCELLEME KONTROLU (Cloud OTA)
   // SADECE ve SADECE web panelinden yeni bir guncelleme emri verildiginde calisir.
@@ -465,11 +537,22 @@ void syncUploadNewEmployee(const char* uid, const char* name) {
   safeUid.replace(":", "");
   docPath += safeUid;
 
+  int idx = employeeFind(uid);
+  Employee* emp = (idx >= 0) ? employeeGet(idx) : nullptr;
+  bool hasCustom = (emp && emp->hasCustomShift);
+
   String fields = "{";
   fields += "\"uid\":" + _strField(uid) + ",";
   fields += "\"name\":" + _strField(name) + ",";
   fields += "\"state\":" + _intField(0) + ",";
   fields += "\"active\":" + _boolField(true) + ",";
+  fields += "\"hasCustomShift\":" + _boolField(hasCustom) + ",";
+  if (hasCustom && emp) {
+    fields += "\"shiftStartHour\":" + _intField(emp->customShift.startHour) + ",";
+    fields += "\"shiftStartMinute\":" + _intField(emp->customShift.startMinute) + ",";
+    fields += "\"shiftEndHour\":" + _intField(emp->customShift.endHour) + ",";
+    fields += "\"shiftEndMinute\":" + _intField(emp->customShift.endMinute) + ",";
+  }
   fields += "\"lastUpdate\":" + _intField(timeNow()) + ",";
   fields += "\"createdAt\":" + _intField(timeNow());
   fields += "}";

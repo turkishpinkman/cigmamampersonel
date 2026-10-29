@@ -675,6 +675,11 @@ function startFirestoreListeners() {
           name: data.name || 'İsimsiz Personel',
           state: data.state !== undefined ? Number(data.state) : 0,
           active: data.active !== undefined ? Boolean(data.active) : true,
+          hasCustomShift: data.hasCustomShift === true,
+          shiftStartHour: data.shiftStartHour !== undefined ? Number(data.shiftStartHour) : null,
+          shiftStartMinute: data.shiftStartMinute !== undefined ? Number(data.shiftStartMinute) : null,
+          shiftEndHour: data.shiftEndHour !== undefined ? Number(data.shiftEndHour) : null,
+          shiftEndMinute: data.shiftEndMinute !== undefined ? Number(data.shiftEndMinute) : null,
           lastUpdate: data.lastUpdate || 0,
           createdAt: data.createdAt || null
         });
@@ -778,6 +783,7 @@ async function syncMissingEmployeesFromEvents(eventsList) {
         name: evt.employeeName || `Personel_${evt.uid.slice(-5)}`,
         state: empState,
         active: true,
+        hasCustomShift: false,
         lastUpdate: evt.timestamp || Math.floor(Date.now() / 1000),
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -1002,6 +1008,20 @@ function renderEmployeesTable() {
         <td class="py-3.5 px-4 font-semibold text-slate-900">${escapeHtml(emp.name)}</td>
         <td class="py-3.5 px-4 font-mono text-xs text-slate-600">${escapeHtml(emp.uid)}</td>
         <td class="py-3.5 px-4">
+          ${emp.hasCustomShift && emp.shiftStartHour !== null && emp.shiftEndHour !== null ? `
+            <span class="inline-flex items-center text-xs px-2.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+              <span class="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5"></span>
+              ${String(emp.shiftStartHour).padStart(2, '0')}:${String(emp.shiftStartMinute || 0).padStart(2, '0')} - ${String(emp.shiftEndHour).padStart(2, '0')}:${String(emp.shiftEndMinute || 0).padStart(2, '0')}
+              <span class="ml-1 text-[10px] text-blue-500 font-bold">(Özel)</span>
+            </span>
+          ` : `
+            <span class="inline-flex items-center text-xs px-2.5 py-0.5 rounded-full font-medium bg-slate-50 text-slate-600 border border-slate-200">
+              ${String(state.settings.shiftStartHour).padStart(2, '0')}:${String(state.settings.shiftStartMinute).padStart(2, '0')} - ${String(state.settings.shiftEndHour).padStart(2, '0')}:${String(state.settings.shiftEndMinute).padStart(2, '0')}
+              <span class="ml-1 text-[10px] text-slate-400">(Genel)</span>
+            </span>
+          `}
+        </td>
+        <td class="py-3.5 px-4">
           <span class="inline-flex items-center text-xs px-2.5 py-0.5 rounded-full font-medium border ${stateInfo.badgeClass}">
             <span class="w-1.5 h-1.5 rounded-full ${stateInfo.dotColor} mr-1.5"></span>
             ${stateInfo.label}
@@ -1034,7 +1054,24 @@ document.getElementById('employee-status-filter')?.addEventListener('change', re
 // 1. Yeni Personel Ekle
 document.getElementById('open-add-employee-modal')?.addEventListener('click', () => {
   document.getElementById('form-add-employee').reset();
+  const toggle = document.getElementById('add-emp-custom-shift-toggle');
+  const inputs = document.getElementById('add-emp-custom-shift-inputs');
+  const startIn = document.getElementById('add-emp-shift-start');
+  const endIn = document.getElementById('add-emp-shift-end');
+  if (toggle) toggle.checked = false;
+  if (inputs) inputs.classList.add('hidden');
+  if (startIn) startIn.value = `${String(state.settings.shiftStartHour).padStart(2, '0')}:${String(state.settings.shiftStartMinute).padStart(2, '0')}`;
+  if (endIn) endIn.value = `${String(state.settings.shiftEndHour).padStart(2, '0')}:${String(state.settings.shiftEndMinute).padStart(2, '0')}`;
   openModal('modal-add-employee');
+});
+
+// Yeni personel özel mesai toggle
+document.getElementById('add-emp-custom-shift-toggle')?.addEventListener('change', (e) => {
+  const inputs = document.getElementById('add-emp-custom-shift-inputs');
+  if (inputs) {
+    if (e.target.checked) inputs.classList.remove('hidden');
+    else inputs.classList.add('hidden');
+  }
 });
 
 const formAddEmployee = document.getElementById('form-add-employee');
@@ -1068,6 +1105,20 @@ if (formAddEmployee) {
     submitBtn.disabled = true;
     spinner.classList.remove('hidden');
 
+    const isCustom = document.getElementById('add-emp-custom-shift-toggle')?.checked || false;
+    let customShiftFields = { hasCustomShift: false };
+    if (isCustom) {
+      const [sh, sm] = (document.getElementById('add-emp-shift-start')?.value || '08:00').split(':').map(Number);
+      const [eh, em] = (document.getElementById('add-emp-shift-end')?.value || '17:00').split(':').map(Number);
+      customShiftFields = {
+        hasCustomShift: true,
+        shiftStartHour: isNaN(sh) ? 8 : sh,
+        shiftStartMinute: isNaN(sm) ? 0 : sm,
+        shiftEndHour: isNaN(eh) ? 17 : eh,
+        shiftEndMinute: isNaN(em) ? 0 : em
+      };
+    }
+
     try {
       // Belgeyi Firestore employees koleksiyonuna yaz
       // active=true, state=0 (Dışarıda)
@@ -1076,6 +1127,7 @@ if (formAddEmployee) {
         name: nameInput,
         state: 0,
         active: true,
+        ...customShiftFields,
         lastUpdate: Math.floor(Date.now() / 1000),
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -1102,8 +1154,35 @@ window.handleOpenEditModal = function(docId, encodedName, encodedUid) {
   document.getElementById('edit-emp-uid').value = uid;
   document.getElementById('edit-emp-name').value = name;
 
+  const emp = state.employees.find(e => e.id === docId || e.uid === uid);
+  const toggle = document.getElementById('edit-emp-custom-shift-toggle');
+  const inputs = document.getElementById('edit-emp-custom-shift-inputs');
+  const startIn = document.getElementById('edit-emp-shift-start');
+  const endIn = document.getElementById('edit-emp-shift-end');
+
+  if (emp && emp.hasCustomShift && emp.shiftStartHour !== null && emp.shiftEndHour !== null) {
+    if (toggle) toggle.checked = true;
+    if (inputs) inputs.classList.remove('hidden');
+    if (startIn) startIn.value = `${String(emp.shiftStartHour).padStart(2, '0')}:${String(emp.shiftStartMinute || 0).padStart(2, '0')}`;
+    if (endIn) endIn.value = `${String(emp.shiftEndHour).padStart(2, '0')}:${String(emp.shiftEndMinute || 0).padStart(2, '0')}`;
+  } else {
+    if (toggle) toggle.checked = false;
+    if (inputs) inputs.classList.add('hidden');
+    if (startIn) startIn.value = `${String(state.settings.shiftStartHour).padStart(2, '0')}:${String(state.settings.shiftStartMinute).padStart(2, '0')}`;
+    if (endIn) endIn.value = `${String(state.settings.shiftEndHour).padStart(2, '0')}:${String(state.settings.shiftEndMinute).padStart(2, '0')}`;
+  }
+
   openModal('modal-edit-employee');
 };
+
+// Düzenle personel özel mesai toggle
+document.getElementById('edit-emp-custom-shift-toggle')?.addEventListener('change', (e) => {
+  const inputs = document.getElementById('edit-emp-custom-shift-inputs');
+  if (inputs) {
+    if (e.target.checked) inputs.classList.remove('hidden');
+    else inputs.classList.add('hidden');
+  }
+});
 
 const formEditEmployee = document.getElementById('form-edit-employee');
 if (formEditEmployee) {
@@ -1124,11 +1203,26 @@ if (formEditEmployee) {
     submitBtn.disabled = true;
     spinner.classList.remove('hidden');
 
+    const isCustom = document.getElementById('edit-emp-custom-shift-toggle')?.checked || false;
+    let updateFields = {
+      name: newName,
+      lastUpdate: Math.floor(Date.now() / 1000)
+    };
+
+    if (isCustom) {
+      const [sh, sm] = (document.getElementById('edit-emp-shift-start')?.value || '08:00').split(':').map(Number);
+      const [eh, em] = (document.getElementById('edit-emp-shift-end')?.value || '17:00').split(':').map(Number);
+      updateFields.hasCustomShift = true;
+      updateFields.shiftStartHour = isNaN(sh) ? 8 : sh;
+      updateFields.shiftStartMinute = isNaN(sm) ? 0 : sm;
+      updateFields.shiftEndHour = isNaN(eh) ? 17 : eh;
+      updateFields.shiftEndMinute = isNaN(em) ? 0 : em;
+    } else {
+      updateFields.hasCustomShift = false;
+    }
+
     try {
-      await db.collection('employees').doc(docId).update({
-        name: newName,
-        lastUpdate: Math.floor(Date.now() / 1000)
-      });
+      await db.collection('employees').doc(docId).update(updateFields);
 
       showToast('Personel bilgisi güncellendi.', 'success');
       closeModal('modal-edit-employee');
@@ -1549,6 +1643,11 @@ function generateReport() {
     let departureMinutesSum = 0;
     let departureCount = 0;
 
+    const empObj = state.employees.find(e => e.uid === emp.uid);
+    const empHasCustom = (empObj && empObj.hasCustomShift && empObj.shiftStartHour !== null && empObj.shiftEndHour !== null);
+    const empShiftStartMin = empHasCustom ? ((empObj.shiftStartHour * 60) + (empObj.shiftStartMinute || 0)) : shiftStartMin;
+    const empShiftEndMin = empHasCustom ? ((empObj.shiftEndHour * 60) + (empObj.shiftEndMinute || 0)) : shiftEndMin;
+
     dayKeys.forEach(dateKey => {
       const dayData = emp.days[dateKey];
       breakCount += dayData.breaksCount;
@@ -1561,20 +1660,20 @@ function generateReport() {
         arrivalMinutesSum += arrivalMin;
         arrivalCount++;
 
-        // Geç kalma kontrolü
-        if (arrivalMin > shiftStartMin) {
+        // Geç kalma kontrolü (personelin özel veya genel mesaisine göre)
+        if (arrivalMin > empShiftStartMin) {
           lateCount++;
         }
       }
 
-      // Erken çıkış kontrolü
+      // Erken çıkış kontrolü (personelin özel veya genel mesaisine göre)
       if (dayData.lastCikis) {
         const dDep = new Date(dayData.lastCikis * 1000);
         const depMin = (dDep.getHours() * 60) + dDep.getMinutes();
         departureMinutesSum += depMin;
         departureCount++;
 
-        if (depMin < shiftEndMin) {
+        if (depMin < empShiftEndMin) {
           earlyExitCount++;
         }
       }

@@ -38,6 +38,13 @@ void employeeInit() {
             _employees[idx].breakStartTime = 0;
             _employees[idx].breakCount = 0;
             _employees[idx].active = true;
+            _employees[idx].hasCustomShift = obj["hasCustomShift"] | false;
+            if (_employees[idx].hasCustomShift) {
+              _employees[idx].customShift.startHour = obj["cStartH"] | 8;
+              _employees[idx].customShift.startMinute = obj["cStartM"] | 0;
+              _employees[idx].customShift.endHour = obj["cEndH"] | 17;
+              _employees[idx].customShift.endMinute = obj["cEndM"] | 0;
+            }
             idx++;
           }
         }
@@ -127,6 +134,7 @@ bool employeeAdd(const char* uid, const char* name) {
   _employees[slot].breakStartTime = 0;
   _employees[slot].breakCount = 0;
   _employees[slot].active = true;
+  _employees[slot].hasCustomShift = false;
 
   employeeSave();
   return true;
@@ -196,6 +204,13 @@ void employeeSave() {
       obj["uid"] = _employees[i].uid;
       obj["name"] = _employees[i].name;
       obj["active"] = true;
+      obj["hasCustomShift"] = _employees[i].hasCustomShift;
+      if (_employees[i].hasCustomShift) {
+        obj["cStartH"] = _employees[i].customShift.startHour;
+        obj["cStartM"] = _employees[i].customShift.startMinute;
+        obj["cEndH"] = _employees[i].customShift.endHour;
+        obj["cEndM"] = _employees[i].customShift.endMinute;
+      }
     }
   }
 

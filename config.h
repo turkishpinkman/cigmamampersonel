@@ -159,6 +159,8 @@ struct Employee {
   unsigned long breakStartTime;
   int breakCount;
   bool active;
+  bool hasCustomShift;
+  ShiftConfig customShift;
 };
 
 struct LogEvent {
