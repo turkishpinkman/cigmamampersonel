@@ -44,6 +44,7 @@
 #define MAX_EMPLOYEES       50
 #define MAX_PENDING_EVENTS  500
 #define SHIFT_END_TOLERANCE 30
+#define SHIFT_START_EARLY_TOLERANCE 30  // Mesai baslamadan en fazla kac dk once girise izin verilecek
 #define MAIN_SCREEN_REFRESH 5000
 
 // ==========================================

@@ -325,7 +325,40 @@ void systemHandleCard(const char* uid) {
     }
 
     switch (emp->state) {
-        case STATE_DISARIDA:
+        case STATE_DISARIDA: {
+            // MESAI SAATI GECERLILIK KONTROLU (SECENEK 3 KURALI)
+            if (timeIsValid()) {
+                uint8_t curH = timeGetHour();
+                uint8_t curM = timeGetMinute();
+                int currentMins = curH * 60 + curM;
+                int shiftStartMins = _config.shift.startHour * 60 + _config.shift.startMinute;
+                int shiftEndMins = _config.shift.endHour * 60 + _config.shift.endMinute;
+                int earliestAllowed = shiftStartMins - SHIFT_START_EARLY_TOLERANCE;
+
+                // 1. Kural: Mesai baslangicindan 30 dakikadan daha erken mi gelindi?
+                if (currentMins < earliestAllowed) {
+                    char errBuf[48];
+                    snprintf(errBuf, sizeof(errBuf), "Erken! Baslangic %02d:%02d", 
+                             _config.shift.startHour, _config.shift.startMinute);
+                    uiDrawErrorScreen(errBuf);
+                    buzzerError();
+                    _currentScreen = SCR_INFO;
+                    _screenTimer = millis();
+                    _processing = false;
+                    return;
+                }
+
+                // 2. Kural: Mesai bitis saati gecti mi?
+                if (currentMins >= shiftEndMins) {
+                    uiDrawErrorScreen("Mesai Bitti! Giris Yok");
+                    buzzerError();
+                    _currentScreen = SCR_INFO;
+                    _screenTimer = millis();
+                    _processing = false;
+                    return;
+                }
+            }
+
             // OTOMATIK GIRIS ISLEMI
             employeeSetState(idx, STATE_CALISIYOR, timeNow());
             eventLog(uid, emp->name, EVT_GIRIS, timeNow());
@@ -335,6 +368,7 @@ void systemHandleCard(const char* uid) {
             _screenTimer = millis();
             _processing = false;
             break;
+        }
 
         case STATE_CALISIYOR:
             // SECIM EKRANINI AC (MOLA / CIKIS)
