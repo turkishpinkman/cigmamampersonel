@@ -122,21 +122,18 @@ void uiDrawMainScreen(const char* timeStr, int totalEmp, int activeEmp, bool wif
         displayClear(COLOR_BG);
         displayHeader("CIGMAMAM PERSONEL", COLOR_HEADER_BG);
 
-        // Talimat metni
-        displayCentered(102, "Kartinizi Okutun", COLOR_TEXT, 2);
+        // Kucuk bilgilendirme paneli (kutu)
+        tft.drawRoundRect(15, 38, 290, 85, 8, COLOR_LIGHT_BLUE);
+        tft.fillRoundRect(17, 40, 286, 81, 6, 0x0842); // Koyu lacivert/gri derinlik
 
-        // NFC / Kart ikonu
-        int16_t cardW = 54, cardH = 34;
-        int16_t cardX = (SCREEN_W - cardW) / 2;
-        int16_t cardY = 130;
-        tft.drawRoundRect(cardX, cardY, cardW, cardH, 5, COLOR_LIGHT_BLUE);
-        tft.fillRoundRect(cardX + 2, cardY + 2, cardW - 4, cardH - 4, 3, COLOR_CARD_BG);
-        tft.drawRoundRect(cardX + 8, cardY + 10, 14, 14, 2, COLOR_WARNING);
-        tft.drawLine(cardX + 15, cardY + 10, cardX + 15, cardY + 24, COLOR_WARNING);
-        tft.drawLine(cardX + 8, cardY + 17, cardX + 22, cardY + 17, COLOR_WARNING);
+        // Alt Talimat metni
+        displayCentered(135, "Lutfen Kart Okutun", COLOR_WARNING, 2);
 
-        // "+ Personel Ekle" butonu (sag alt kose)
-        displayButton(220, 195, 95, 30, "+ EKLE", COLOR_SUCCESS, COLOR_TEXT, 1);
+        // Buton 1: SYNC (Bulut Senkronizasyonu) Sol Alt
+        displayButton(15, 175, 135, 36, "SYNC", 0x03E0, COLOR_TEXT, 2);
+
+        // Buton 2: + EKLE (Yeni Personel Kaydi) Sag Alt
+        displayButton(170, 175, 135, 36, "+ EKLE", 0x001F, COLOR_TEXT, 2);
 
         _mainScreenDrawn = true;
     }
@@ -144,19 +141,18 @@ void uiDrawMainScreen(const char* timeStr, int totalEmp, int activeEmp, bool wif
     // Saat guncelleme (sadece degistiyse)
     const char* tStr = (timeStr && timeStr[0]) ? timeStr : "--:--:--";
     if (needFullDraw || strcmp(tStr, _lastTimeStr) != 0) {
-        // Eski saati sil (siyah dikdortgen)
-        tft.fillRect(0, 52, SCREEN_W, 40, COLOR_BG);
-        // Yeni saati yaz
-        displayCentered(60, tStr, COLOR_TEXT, 3);
+        // Saat alanini temizle ve buyuk punto ile yaz
+        tft.fillRect(25, 48, 270, 32, 0x0842);
+        displayCentered(52, tStr, COLOR_TEXT, 3);
         strncpy(_lastTimeStr, tStr, sizeof(_lastTimeStr) - 1);
     }
 
     // Personel sayisi guncelleme (sadece degistiyse)
     if (needFullDraw || totalEmp != _lastTotalEmp || activeEmp != _lastActiveEmp) {
-        tft.fillRect(0, 176, 215, 16, COLOR_BG);  // Eski yaziyi sil
-        char empBuf[36];
-        snprintf(empBuf, sizeof(empBuf), "Personel: %d   Aktif: %d", totalEmp, activeEmp);
-        displayCentered(182, empBuf, COLOR_TEXT, 1);
+        tft.fillRect(25, 90, 270, 20, 0x0842);
+        char empBuf[40];
+        snprintf(empBuf, sizeof(empBuf), "Kayitli: %d   Iceride: %d", totalEmp, activeEmp);
+        displayCentered(94, empBuf, COLOR_TEXT, 1);
         _lastTotalEmp = totalEmp;
         _lastActiveEmp = activeEmp;
     }
@@ -591,8 +587,15 @@ void uiDrawRegisterCardScreen() {
 }
 
 /**
- * @brief Ana ekrandaki "+ EKLE" butonuna dokunulup dokunulmadigini kontrol eder.
+ * @brief Ana ekrandaki "+ EKLE" butonuna dokunulup dokunulmadigini kontrol eder (170, 175, 135x36).
  */
 bool uiCheckRegisterButtonTouch(int16_t x, int16_t y) {
-    return isInRect(x, y, 220, 195, 95, 30, 4);
+    return isInRect(x, y, 170, 175, 135, 36, 6);
+}
+
+/**
+ * @brief Ana ekrandaki "SYNC" butonuna dokunulup dokunulmadigini kontrol eder (15, 175, 135x36).
+ */
+bool uiCheckSyncButtonTouch(int16_t x, int16_t y) {
+    return isInRect(x, y, 15, 175, 135, 36, 6);
 }

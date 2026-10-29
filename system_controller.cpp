@@ -592,6 +592,24 @@ void systemHandleTouch(int16_t x, int16_t y) {
                 uiDrawRegisterCardScreen();
                 buzzerSuccess();
             }
+            // Ana ekrandaki "SYNC" butonuna dokunuldu mu?
+            else if (uiCheckSyncButtonTouch(x, y)) {
+                buzzerSuccess();
+                uiDrawInfoScreen("", "Senkronize Ediliyor...", 0x03E0);
+                _currentScreen = SCR_INFO;
+                _screenTimer = millis();
+                if (wifiIsConnected()) {
+                    syncUploadAllEmployees();
+                    syncUploadPendingEvents();
+                    syncDownloadEmployees();
+                    syncDownloadSettings();
+                    uiDrawInfoScreen("", "Senkronizasyon Basarili!", COLOR_SUCCESS);
+                } else {
+                    uiDrawErrorScreen("WiFi Baglantisi Yok!");
+                    buzzerError();
+                }
+                _screenTimer = millis();
+            }
             break;
 
         case SCR_REGISTER_CARD:

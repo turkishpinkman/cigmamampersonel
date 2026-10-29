@@ -29,3 +29,4 @@ int uiCheckShiftTouch(int16_t x, int16_t y);       // 0-3=start +/-, 4-7=end +/-
 int uiCheckDeleteTouch(int16_t x, int16_t y);      // 1=evet, 2=hayir, 0=yok
 int uiCheckAddEmployeeTouch(int16_t x, int16_t y); // 1=ekle, 2=geri, 0=yok
 bool uiCheckRegisterButtonTouch(int16_t x, int16_t y);  // Ana ekrandaki + butonu
+bool uiCheckSyncButtonTouch(int16_t x, int16_t y);      // Ana ekrandaki SYNC butonu
