@@ -5,6 +5,7 @@
 #include <Update.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <esp_task_wdt.h>
 #include "display_manager.h"
 #include "touch_ui.h"
 
@@ -188,10 +189,13 @@ bool otaPerformCloudUpdate(const char* binUrl) {
 
   WiFiClient* stream = http.getStreamPtr();
   size_t written = 0;
-  uint8_t buff[1024];
+  uint8_t buff[2048]; // Tamponu 2KB yaparak aktarimi hizlandir
   int lastProgress = -1;
 
   while (http.connected() && (written < (size_t)contentLength)) {
+    // Watchdog'u besle (Cihazin reset atmasini onler)
+    esp_task_wdt_reset();
+
     size_t availableBytes = stream->available();
     if (availableBytes) {
       int readBytes = stream->readBytes(buff, ((availableBytes > sizeof(buff)) ? sizeof(buff) : availableBytes));
@@ -201,12 +205,15 @@ bool otaPerformCloudUpdate(const char* binUrl) {
       if (progress != lastProgress && progress % 10 == 0) {
         lastProgress = progress;
         Serial.printf("[Cloud OTA] Ilerleme: %%%d\n", progress);
+        
+        // Ekrana sadece progress yazisini guncelle (tum ekrani silip yavaslatma)
+        tft.fillRect(30, 80, SCREEN_W - 60, 45, 0x10E7);
         char pMsg[32];
-        snprintf(pMsg, sizeof(pMsg), "Guncelleniyor: %%%d", progress);
-        uiDrawInfoScreen("", pMsg, 0x2F18);
+        snprintf(pMsg, sizeof(pMsg), "Yukleniyor: %%%d", progress);
+        displayText(55, 95, pMsg, 0xFFFF, 2);
       }
     }
-    delay(1);
+    yield(); // ESP32 arka plan WiFi gorevlerine nefes aldir
   }
 
   http.end();
