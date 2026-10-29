@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="tr" class="h-full bg-slate-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Çiğmamam - Personel Devam ve Yönetim Paneli</title>
+
+  <!-- Google Font: Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            sidebar: '#1e293b',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Özel Stiller -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Firebase JS SDK v8 compat via CDN (v10.7.1) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- Uygulama Mantığı (defer ile DOM yüklendikten sonra çalışır) -->
+  <script src="app.js" defer></script>
+</head>
+<body class="h-full text-slate-800 antialiased selection:bg-blue-500 selection:text-white">
+
+  <!-- =========================================================================
+       1. GLOBAL BİLEŞENLER (TOAST VE LOADER)
+       ========================================================================= -->
+
+  <!-- Toast Bildirim Konteyneri -->
+  <div id="toast-container" class="no-print"></div>
+
+  <!-- Global Yükleniyor Göstergesi -->
+  <div id="global-loader" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm transition-opacity duration-300">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl flex flex-col items-center space-y-4 max-w-xs w-full mx-4 border border-slate-100">
+      <div class="spinner spinner-blue !w-9 !h-9 border-3"></div>
+      <p class="text-sm font-semibold text-slate-700">Sistem Hazırlanıyor...</p>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       2. GİRİŞ EKRANI (LOGIN VIEW - Oturum Açılmadığında Gösterilir)
+       ========================================================================= -->
+  <div id="login-view" class="hidden min-h-screen flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-gradient-to-br from-slate-900 via-slate-800 to-[#1e293b]">
+    <div class="w-full max-w-md">
+      <!-- Giriş Kartı -->
+      <div class="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 border border-slate-100/10">
+        
+        <!-- Logo ve Başlık -->
+        <div class="text-center mb-8">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-500/30 mb-4">
+            <svg class="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          </div>
+          <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Çiğmamam Yönetim Paneli</h1>
+          <p class="text-xs sm:text-sm text-slate-500 mt-1 font-medium">Personel Giriş-Çıkış ve Mesai Takip Sistemi</p>
+        </div>
+
+        <!-- Hata Bildirim Kutusu -->
+        <div id="login-error" class="hidden mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-start space-x-3 text-rose-700">
+          <svg class="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span id="login-error-text" class="text-xs font-semibold leading-relaxed">Hata mesajı</span>
+        </div>
+
+        <!-- Giriş Formu -->
+        <form id="login-form" class="space-y-5">
+          <div>
+            <label for="login-email" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">E-Posta Adresi</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                </svg>
+              </span>
+              <input 
+                id="login-email" 
+                type="email" 
+                required 
+                placeholder="yonetici@cigmamam.com"
+                autocomplete="email"
+                class="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+              >
+            </div>
+          </div>
+
+          <div>
+            <label for="login-password" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Yönetici Şifresi</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </span>
+              <input 
+                id="login-password" 
+                type="password" 
+                required 
+                placeholder="••••••••"
+                autocomplete="current-password"
+                class="w-full pl-11 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+              >
+              <button 
+                type="button" 
+                id="toggle-password-btn" 
+                class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 hover:text-slate-600 focus:outline-none transition"
+                title="Şifreyi Göster/Gizle"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between pt-1">
+            <label class="flex items-center cursor-pointer select-none">
+              <input 
+                type="checkbox" 
+                id="remember-me" 
+                checked 
+                class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0"
+              >
+              <span class="ml-2 text-xs font-semibold text-slate-600">Beni Hatırla</span>
+            </label>
+            <span class="text-xs text-slate-400 font-medium">Güvenli Yönetim Oturumu</span>
+          </div>
+
+          <button 
+            type="submit" 
+            id="login-btn"
+            class="w-full mt-2 py-3.5 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-500/25 transition duration-150 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span id="login-btn-spinner" class="spinner spinner-white hidden mr-2"></span>
+            <span>Giriş Yap</span>
+          </button>
+        </form>
+
+        <div class="mt-8 pt-6 border-t border-slate-100 text-center">
+          <p class="text-xs text-slate-400 font-medium">© 2026 Çiğmamam Gıda San. Tic. Ltd. Şti.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       3. DASHBOARD SPA (APP VIEW - Oturum Açıldığında Gösterilir)
+       ========================================================================= -->
+  <div id="app-view" class="hidden min-h-screen flex bg-slate-50">
+
+    <!-- Mobil Kenar Çubuğu Karartma Arka Planı -->
+    <div id="sidebar-backdrop" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 hidden lg:hidden no-print"></div>
+
+    <!-- Kenar Çubuğu (Sidebar - #1e293b) -->
+    <aside 
+      id="sidebar" 
+      class="fixed top-0 bottom-0 left-0 z-40 w-64 bg-[#1e293b] text-white flex flex-col justify-between transition-transform duration-300 transform -translate-x-full lg:translate-x-0 dark-scroll overflow-y-auto no-print shadow-xl"
+    >
+      <!-- Üst Kısım: Logo & Navigasyon -->
+      <div>
+        <!-- Marka & Kapatma Butonu -->
+        <div class="p-5 flex items-center justify-between border-b border-slate-800">
+          <div class="flex items-center space-x-3 min-w-0">
+            <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-blue-600/30 flex-shrink-0">
+              ÇM
+            </div>
+            <div class="min-w-0">
+              <h2 class="text-base font-extrabold text-white truncate tracking-tight">Çiğmamam</h2>
+              <p class="text-[11px] font-medium text-slate-400 truncate">Personel Takip Sistemi</p>
+            </div>
+          </div>
+          <button 
+            id="close-sidebar-btn" 
+            type="button" 
+            class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 lg:hidden transition"
+            title="Menüyü Kapat"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Terminal & Mesai Bilgi Rozetleri -->
+        <div class="p-4 space-y-2">
+          <div class="px-3.5 py-2.5 rounded-xl bg-slate-800/90 border border-slate-700/60 flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2 min-w-0">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-pulse"></span>
+              <span id="shift-summary-badge" class="font-semibold text-slate-200 truncate">Mesai: 08:00 - 17:00</span>
+            </div>
+          </div>
+          <div class="px-3.5 py-1.5 rounded-lg bg-slate-800/40 text-[11px] font-mono text-slate-400 flex items-center justify-between">
+            <span id="sidebar-device-id">Cihaz: ESP32_001</span>
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+          </div>
+        </div>
+
+        <!-- Menü Başlığı -->
+        <div class="px-5 pt-3 pb-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+          Yönetim Menüsü
+        </div>
+
+        <!-- Navigasyon Sekmeleri -->
+        <nav class="px-3 space-y-1">
+          <!-- Sekme 1: Gösterge Paneli -->
+          <button 
+            type="button" 
+            data-tab="dashboard"
+            class="nav-tab active w-full flex items-center px-3.5 py-3 rounded-xl text-sm font-medium transition text-white bg-blue-600 shadow-md shadow-blue-600/20"
+          >
+            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+            </svg>
+            <span class="ml-3 font-semibold">Gösterge Paneli</span>
+          </button>
+
+          <!-- Sekme 2: Personeller -->
+          <button 
+            type="button" 
+            data-tab="employees"
+            class="nav-tab w-full flex items-center px-3.5 py-3 rounded-xl text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <span class="ml-3 font-semibold">Personeller</span>
+            <span id="nav-emp-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-bold">0</span>
+          </button>
+
+          <!-- Sekme 3: Kayıtlar -->
+          <button 
+            type="button" 
+            data-tab="records"
+            class="nav-tab w-full flex items-center px-3.5 py-3 rounded-xl text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="ml-3 font-semibold">Giriş-Çıkış Kayıtları</span>
+          </button>
+
+          <!-- Sekme 4: Raporlar -->
+          <button 
+            type="button" 
+            data-tab="reports"
+            class="nav-tab w-full flex items-center px-3.5 py-3 rounded-xl text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span class="ml-3 font-semibold">Mesai Raporları</span>
+          </button>
+
+          <!-- Sekme 5: Ayarlar -->
+          <button 
+            type="button" 
+            data-tab="settings"
+            class="nav-tab w-full flex items-center px-3.5 py-3 rounded-xl text-sm font-medium transition text-slate-400 hover:text-white hover:bg-slate-800"
+          >
+            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span class="ml-3 font-semibold">Sistem Ayarları</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Alt Kısım: Yönetici Profil Kartı & Çıkış Yap -->
+      <div class="p-4 border-t border-slate-800 bg-[#0f172a]/40">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-3 min-w-0">
+            <div 
+              id="user-avatar-initial" 
+              class="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow flex-shrink-0"
+            >
+              Y
+            </div>
+            <div class="min-w-0">
+              <p class="text-xs font-bold text-white truncate leading-tight">Yönetici</p>
+              <p id="user-display-email" class="text-[11px] font-medium text-slate-400 truncate max-w-[125px]">yonetici@cigmamam.com</p>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            id="logout-btn" 
+            title="Oturumu Kapat"
+            class="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition flex-shrink-0"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Ana İçerik Alanı (Sidebar genişliği kadar sola boşluk - lg:pl-64) -->
+    <div class="flex-1 lg:pl-64 flex flex-col min-h-screen">
+      
+      <!-- Üst Başlık Çubuğu (Header) -->
+      <header class="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between no-print">
+        <div class="flex items-center space-x-3 min-w-0">
+          <!-- Mobil Hamburger Butonu -->
+          <button 
+            type="button" 
+            id="mobile-sidebar-toggle" 
+            class="p-2 -ml-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 lg:hidden focus:outline-none transition"
+            title="Menüyü Aç"
+          >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+
+          <!-- Sekme Başlık ve Alt Başlık -->
+          <div class="min-w-0">
+            <h1 id="page-title" class="text-lg sm:text-xl font-extrabold text-slate-900 truncate tracking-tight">Gösterge Paneli</h1>
+            <p id="page-subtitle" class="text-xs text-slate-500 truncate hidden sm:block font-medium">Genel personel durumu ve anlık hareketler</p>
+          </div>
+        </div>
+
+        <!-- Sağ Taraf: Canlı Saat & Tarih Sayacı -->
+        <div class="flex items-center space-x-4">
+          <div class="flex items-center space-x-3 bg-slate-50 border border-slate-200/80 rounded-2xl px-3.5 py-1.5 shadow-sm">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0"></span>
+            <div class="text-right">
+              <div id="live-time" class="font-mono font-bold text-slate-900 text-sm leading-tight">--:--:--</div>
+              <div id="live-date" class="text-[10px] font-medium text-slate-400 capitalize">--</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Ana İçerik Gövdesi (Main) -->
+      <main class="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+
+        <!-- ===================================================================
+             SEKME 1: GÖSTERGE PANELİ (DASHBOARD)
+             =================================================================== -->
+        <section id="tab-dashboard" class="tab-content active space-y-6">
+          
+          <!-- Üst Metrik Kartları (4 Adet) -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+            
+            <!-- Kart 1: Toplam Personel -->
+            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+              <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Kayıtlı Personel</p>
+                <p id="stat-total-employees" class="text-3xl font-extrabold text-slate-900 mt-1">0</p>
+                <p class="text-[11px] text-slate-500 mt-1">Aktif sistem kartı</p>
+              </div>
+              <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+            </div>
+
+            <!-- Kart 2: Şu An İçeride Olanlar -->
+            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+              <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Şu An İçeride</p>
+                <p id="stat-present-now" class="text-3xl font-extrabold text-emerald-600 mt-1">0</p>
+                <p class="text-[11px] text-slate-500 mt-1">Fabrikada çalışan personel</p>
+              </div>
+              <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+              </div>
+            </div>
+
+            <!-- Kart 3: Molada Olanlar -->
+            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+              <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Molada</p>
+                <p id="stat-on-break" class="text-3xl font-extrabold text-amber-600 mt-1">0</p>
+                <p class="text-[11px] text-slate-500 mt-1">Anlık mola kullananlar</p>
+              </div>
+              <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+
+            <!-- Kart 4: Bugün Geç Kalanlar -->
+            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+              <div>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Geç Kalanlar</p>
+                <p id="stat-late-arrivals" class="text-3xl font-extrabold text-rose-600 mt-1">0</p>
+                <p class="text-[11px] text-slate-500 mt-1">Bugün mesaiye geç başlayan</p>
+              </div>
+              <div class="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Alt Grid: İçeridekiler & Canlı Hareket Akışı -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- Kolon 1: Şu An İçeride Olan Personeller -->
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col">
+              <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <h3 class="font-bold text-slate-900 text-base">Şu An İçeride Olan Personeller</h3>
+                  <p class="text-xs text-slate-500 mt-0.5">Fabrika sahasında aktif çalışma ve mola durumu</p>
+                </div>
+                <span id="present-count-badge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  0 Kişi
+                </span>
+              </div>
+              <div id="present-employees-list" class="divide-y divide-slate-100 p-2 overflow-y-auto max-h-[460px]">
+                <!-- app.js renderDashboard() tarafından doldurulur -->
+              </div>
+            </div>
+
+            <!-- Kolon 2: Bugünün Canlı Aktivite Akışı -->
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col">
+              <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <h3 class="font-bold text-slate-900 text-base">Bugünün Hareket Akışı</h3>
+                  <p class="text-xs text-slate-500 mt-0.5">Terminalden iletilen son 20 olay kaydı</p>
+                </div>
+                <span class="inline-flex items-center text-xs text-slate-400 font-medium">
+                  <span class="w-2 h-2 rounded-full bg-blue-500 mr-1.5 animate-ping"></span>
+                  Canlı
+                </span>
+              </div>
+              <div id="today-activity-feed" class="divide-y divide-slate-100 p-2 overflow-y-auto max-h-[460px]">
+                <!-- app.js renderDashboard() tarafından doldurulur -->
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+
+        <!-- ===================================================================
+             SEKME 2: PERSONELLER (EMPLOYEES)
+             =================================================================== -->
+        <section id="tab-employees" class="tab-content space-y-6">
+          
+          <!-- Filtre ve Yeni Personel Butonu -->
+          <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 max-w-xl">
+              <!-- Arama Girdisi -->
+              <div class="relative flex-1">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </span>
+                <input 
+                  type="text" 
+                  id="employee-search-input"
+                  placeholder="İsim veya Kart UID ile ara..."
+                  class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+              </div>
+
+              <!-- Durum Filtresi Dropdown -->
+              <div class="w-full sm:w-48">
+                <select 
+                  id="employee-status-filter"
+                  class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+                  <option value="ALL">Tüm Durumlar</option>
+                  <option value="1">Çalışıyor (İçeride)</option>
+                  <option value="2">Molada</option>
+                  <option value="0">Dışarıda</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Yeni Personel Ekle Butonu -->
+            <button 
+              type="button" 
+              id="open-add-employee-modal"
+              class="inline-flex items-center justify-center space-x-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-500/20 transition duration-150 flex-shrink-0"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Yeni Personel Ekle</span>
+            </button>
+          </div>
+
+          <!-- Personeller Tablosu Kartı -->
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="text-xs uppercase bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th scope="col" class="py-3.5 px-4 text-center w-12">#</th>
+                    <th scope="col" class="py-3.5 px-4">Personel Adı Soyadı</th>
+                    <th scope="col" class="py-3.5 px-4">NFC / Kart UID</th>
+                    <th scope="col" class="py-3.5 px-4">Anlık Durum</th>
+                    <th scope="col" class="py-3.5 px-4">Son İşlem Zamanı</th>
+                    <th scope="col" class="py-3.5 px-4 text-right">İşlemler</th>
+                  </tr>
+                </thead>
+                <tbody id="employees-table-body" class="divide-y divide-slate-100 font-normal">
+                  <!-- app.js renderEmployeesTable() tarafından dinamik oluşturulur -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Boş Durum Uyarısı -->
+            <div id="employees-empty-state" class="hidden py-16 px-4 text-center">
+              <div class="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              </div>
+              <p class="text-sm font-bold text-slate-700">Kriterlere uygun personel bulunamadı.</p>
+              <p class="text-xs text-slate-400 mt-1">Arama terimlerinizi değiştirebilir veya yeni personel ekleyebilirsiniz.</p>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- ===================================================================
+             SEKME 3: GİRİŞ-ÇIKIŞ KAYITLARI (RECORDS)
+             =================================================================== -->
+        <section id="tab-records" class="tab-content space-y-6">
+          
+          <!-- Filtreleme Paneli -->
+          <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              
+              <!-- Başlangıç Tarihi -->
+              <div>
+                <label for="record-filter-start" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Başlangıç Tarihi</label>
+                <input 
+                  type="date" 
+                  id="record-filter-start" 
+                  class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+              </div>
+
+              <!-- Bitiş Tarihi -->
+              <div>
+                <label for="record-filter-end" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Bitiş Tarihi</label>
+                <input 
+                  type="date" 
+                  id="record-filter-end" 
+                  class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+              </div>
+
+              <!-- Personel Seçimi -->
+              <div>
+                <label for="record-filter-employee" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Personel Seçimi</label>
+                <select 
+                  id="record-filter-employee" 
+                  class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                >
+                  <option value="ALL">Tüm Personeller</option>
+                  <!-- app.js populateEmployeeFilterDropdown() doldurur -->
+                </select>
+              </div>
+
+            </div>
+
+            <!-- İşlem Türü Onay Kutuları (Checkboxes) -->
+            <div>
+              <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">İşlem Türleri</label>
+              <div class="flex flex-wrap gap-2.5 sm:gap-4">
+                <label class="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition select-none">
+                  <input type="checkbox" name="record-event-type" value="GIRIS" checked class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0 mr-2">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5"></span>
+                  Giriş
+                </label>
+                <label class="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition select-none">
+                  <input type="checkbox" name="record-event-type" value="CIKIS" checked class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0 mr-2">
+                  <span class="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
+                  Çıkış
+                </label>
+                <label class="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition select-none">
+                  <input type="checkbox" name="record-event-type" value="MOLA_BAS" checked class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0 mr-2">
+                  <span class="w-2 h-2 rounded-full bg-amber-500 mr-1.5"></span>
+                  Mola Başlangıç
+                </label>
+                <label class="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition select-none">
+                  <input type="checkbox" name="record-event-type" value="MOLA_BIT" checked class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0 mr-2">
+                  <span class="w-2 h-2 rounded-full bg-blue-500 mr-1.5"></span>
+                  Mola Bitiş
+                </label>
+                <label class="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition select-none">
+                  <input type="checkbox" name="record-event-type" value="OTO_CIKIS" checked class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500 focus:ring-offset-0 mr-2">
+                  <span class="w-2 h-2 rounded-full bg-purple-500 mr-1.5"></span>
+                  Otomatik Çıkış
+                </label>
+              </div>
+            </div>
+
+            <!-- Filtre Eylem Butonları -->
+            <div class="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100">
+              <div class="flex items-center space-x-2">
+                <button 
+                  type="button" 
+                  id="records-filter-apply-btn"
+                  class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20 transition"
+                >
+                  Filtrele
+                </button>
+                <button 
+                  type="button" 
+                  id="records-filter-reset-btn"
+                  class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
+                >
+                  Sıfırla
+                </button>
+              </div>
+
+              <!-- Excel / CSV Dışa Aktar Butonu -->
+              <button 
+                type="button" 
+                id="records-export-csv-btn"
+                class="inline-flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/20 transition"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Excel / CSV İndir</span>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- Kayıtlar Tablosu Kartı -->
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col">
+            <div class="px-5 py-3.5 bg-slate-50/60 border-b border-slate-200/80 flex items-center justify-between">
+              <span id="records-count-summary" class="text-xs font-bold text-slate-600">Toplam 0 kayıt listeleniyor</span>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="text-xs uppercase bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th scope="col" class="py-3 px-4">Tarih</th>
+                    <th scope="col" class="py-3 px-4">Saat</th>
+                    <th scope="col" class="py-3 px-4">Personel Adı</th>
+                    <th scope="col" class="py-3 px-4">Kart UID</th>
+                    <th scope="col" class="py-3 px-4">İşlem Türü</th>
+                    <th scope="col" class="py-3 px-4">Terminal / Cihaz</th>
+                  </tr>
+                </thead>
+                <tbody id="records-table-body" class="divide-y divide-slate-100 font-normal">
+                  <!-- app.js renderRecordsTable() doldurur -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Boş Kayıt Bildirimi -->
+            <div id="records-empty-state" class="hidden py-16 px-4 text-center">
+              <div class="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p class="text-sm font-bold text-slate-700">Seçilen filtrelere uygun hareket kaydı bulunamadı.</p>
+              <p class="text-xs text-slate-400 mt-1">Lütfen tarih aralığını genişletin veya filtreleri sıfırlayın.</p>
+            </div>
+
+            <!-- Sayfalama (Pagination) -->
+            <div class="px-5 py-4 border-t border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50">
+              <span id="records-page-info" class="text-xs font-semibold text-slate-500">Sayfa 1 / 1 (Toplam 0 kayıt)</span>
+              <div class="flex items-center space-x-2">
+                <button 
+                  type="button" 
+                  id="records-prev-page" 
+                  class="px-3 py-1.5 border border-slate-200 bg-white text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
+                >
+                  Önceki
+                </button>
+                <div id="records-page-numbers" class="flex items-center space-x-1">
+                  <!-- app.js tarafından butonlar yerleştirilir -->
+                </div>
+                <button 
+                  type="button" 
+                  id="records-next-page" 
+                  class="px-3 py-1.5 border border-slate-200 bg-white text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-sm"
+                >
+                  Sonraki
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- ===================================================================
+             SEKME 4: MESAI VE DEVAM RAPORLARI (REPORTS)
+             =================================================================== -->
+        <section id="tab-reports" class="tab-content space-y-6">
+
+          <!-- Yalnızca Yazdırmada Görünen Antet (Print-Only Header) -->
+          <div class="print-only hidden mb-6 pb-4 border-b border-slate-300">
+            <h2 class="text-2xl font-black text-slate-900 tracking-tight">Çiğmamam Personel Takip Sistemi</h2>
+            <p class="text-sm font-semibold text-slate-700 mt-1">Personel Mesai ve Devam Durum Raporu</p>
+            <div class="flex items-center justify-between text-xs text-slate-500 mt-3 pt-2 border-t border-slate-200">
+              <span id="print-report-period" class="font-bold">Dönem: --</span>
+              <span id="print-report-date">Rapor Alınma Zamanı: --</span>
+            </div>
+          </div>
+
+          <!-- Rapor Filtre ve Hızlı Tarih Butonları (no-print) -->
+          <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm space-y-4 no-print">
+            <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+              
+              <div class="flex flex-col sm:flex-row sm:items-end gap-3 flex-1">
+                <!-- Başlangıç -->
+                <div class="flex-1">
+                  <label for="report-start-date" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Rapor Başlangıç</label>
+                  <input 
+                    type="date" 
+                    id="report-start-date" 
+                    class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                  >
+                </div>
+
+                <!-- Bitiş -->
+                <div class="flex-1">
+                  <label for="report-end-date" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Rapor Bitiş</label>
+                  <input 
+                    type="date" 
+                    id="report-end-date" 
+                    class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                  >
+                </div>
+
+                <!-- Hızlı Seçim Butonları -->
+                <div class="flex items-center space-x-1.5 pt-1 sm:pt-0">
+                  <button 
+                    type="button" 
+                    id="report-quick-today" 
+                    class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+                  >
+                    Bugün
+                  </button>
+                  <button 
+                    type="button" 
+                    id="report-quick-week" 
+                    class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+                  >
+                    Bu Hafta
+                  </button>
+                  <button 
+                    type="button" 
+                    id="report-quick-month" 
+                    class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+                  >
+                    Bu Ay
+                  </button>
+                </div>
+              </div>
+
+              <!-- Eylem Butonları -->
+              <div class="flex items-center space-x-2 pt-2 lg:pt-0 flex-shrink-0">
+                <button 
+                  type="button" 
+                  id="generate-report-btn" 
+                  class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20 transition"
+                >
+                  Raporu Oluştur
+                </button>
+                <button 
+                  type="button" 
+                  id="print-report-btn" 
+                  class="inline-flex items-center space-x-1.5 px-4 py-2.5 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white text-xs font-bold rounded-xl shadow-md transition"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  <span>Yazdır / PDF</span>
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Rapor Dönemi Özet Sayaçları -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm text-center">
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Toplam Çalışılan Gün</p>
+              <p id="report-summary-days" class="text-2xl sm:text-3xl font-extrabold text-blue-600 mt-1">0</p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm text-center">
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Geç Kalma Sayısı</p>
+              <p id="report-summary-late" class="text-2xl sm:text-3xl font-extrabold text-rose-600 mt-1">0</p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm text-center">
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Erken Çıkış Sayısı</p>
+              <p id="report-summary-early" class="text-2xl sm:text-3xl font-extrabold text-amber-600 mt-1">0</p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm text-center">
+              <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Kullanılan Mola</p>
+              <p id="report-summary-breaks" class="text-2xl sm:text-3xl font-extrabold text-slate-800 mt-1">0</p>
+            </div>
+
+          </div>
+
+          <!-- Rapor Detay Tablosu -->
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="text-xs uppercase bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th scope="col" class="py-3.5 px-4">Personel / Kart UID</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Çalışılan Gün</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Geç Kalma</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Erken Çıkış</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Mola Sayısı</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Ortalama Giriş</th>
+                    <th scope="col" class="py-3.5 px-4 text-center">Ortalama Çıkış</th>
+                  </tr>
+                </thead>
+                <tbody id="reports-table-body" class="divide-y divide-slate-100 font-normal">
+                  <!-- app.js generateReport() doldurur -->
+                </tbody>
+              </table>
+            </div>
+
+            <div id="reports-empty-state" class="hidden py-16 px-4 text-center">
+              <div class="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <p class="text-sm font-bold text-slate-700">Seçili tarih aralığında mesai verisi bulunamadı.</p>
+              <p class="text-xs text-slate-400 mt-1">Lütfen geçerli bir tarih aralığı belirleyip tekrar deneyiniz.</p>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- ===================================================================
+             SEKME 5: SISTEM AYARLARI (SETTINGS)
+             =================================================================== -->
+        <section id="tab-settings" class="tab-content space-y-6">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Kart 1: Mesai Saatleri Ayarları -->
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+              <div class="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-bold text-slate-900 text-base">Fabrika Mesai Saatleri</h3>
+                  <p class="text-xs text-slate-500">Geç kalma ve erken çıkış kuralları için baz alınacak saatler</p>
+                </div>
+              </div>
+
+              <form id="settings-shift-form" class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label for="settings-shift-start" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Mesai Başlangıç Saati</label>
+                    <input 
+                      type="time" 
+                      id="settings-shift-start" 
+                      required
+                      class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    >
+                  </div>
+                  <div>
+                    <label for="settings-shift-end" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Mesai Bitiş Saati</label>
+                    <input 
+                      type="time" 
+                      id="settings-shift-end" 
+                      required
+                      class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    >
+                  </div>
+                </div>
+
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  * Başlangıç saatinden sonra yapılan ilk girişler <strong>Geç Kalma</strong>, bitiş saatinden önce yapılan çıkışlar <strong>Erken Çıkış</strong> olarak raporlanır. ESP32 terminali bu ayarları periyodik olarak Firestore'dan günceller.
+                </p>
+
+                <div class="pt-2">
+                  <button 
+                    type="submit" 
+                    id="save-shift-settings-btn"
+                    class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-500/20 transition flex items-center justify-center disabled:opacity-50"
+                  >
+                    <span id="save-shift-spinner" class="spinner spinner-white hidden mr-2"></span>
+                    <span>Mesai Saatlerini Kaydet</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Kart 2: Cihaz & Master Kart Ayarları -->
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+              <div class="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center flex-shrink-0">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-bold text-slate-900 text-base">Terminal ve Donanım Bilgisi</h3>
+                  <p class="text-xs text-slate-500">ESP32 terminal tanımlaması ve Master RFID kartı</p>
+                </div>
+              </div>
+
+              <form id="settings-device-form" class="space-y-4">
+                <div>
+                  <label for="settings-device-id" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Terminal Donanım Kimliği</label>
+                  <input 
+                    type="text" 
+                    id="settings-device-id" 
+                    disabled 
+                    readonly
+                    class="w-full py-2.5 px-3 bg-slate-100 border border-slate-200 rounded-xl text-sm font-mono text-slate-500 cursor-not-allowed"
+                  >
+                </div>
+
+                <div>
+                  <label for="settings-admin-uid" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Yönetici Master Kart UID</label>
+                  <input 
+                    type="text" 
+                    id="settings-admin-uid" 
+                    required 
+                    placeholder="Örn: 00000000 veya Kart UID"
+                    class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                  >
+                  <p class="text-[11px] text-slate-400 mt-1">Terminalde menüye giriş ve yerel Wi-Fi/donanım yapılandırması için kullanılan Master RFID kartı.</p>
+                </div>
+
+                <div class="pt-2">
+                  <button 
+                    type="submit" 
+                    id="save-device-settings-btn"
+                    class="w-full sm:w-auto px-6 py-2.5 bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-bold text-sm rounded-xl shadow-md transition flex items-center justify-center disabled:opacity-50"
+                  >
+                    <span id="save-device-spinner" class="spinner spinner-white hidden mr-2"></span>
+                    <span>Cihaz Ayarlarını Kaydet</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Kart 3: Yönetici Hesabı ve Şifre Güncelleme -->
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5 lg:col-span-2">
+              <div class="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-bold text-slate-900 text-base">Yönetici Hesabı ve Güvenlik</h3>
+                  <p class="text-xs text-slate-500">Panel giriş bilgileri ve şifre değişikliği</p>
+                </div>
+              </div>
+
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200/80 gap-3">
+                <div>
+                  <span class="text-xs text-slate-400 font-bold uppercase tracking-wider">Aktif Oturum E-Postası</span>
+                  <p id="settings-account-email" class="text-sm font-extrabold text-slate-800 font-mono mt-0.5">admin@cigmamam.com</p>
+                </div>
+                <button 
+                  type="button" 
+                  id="settings-logout-btn" 
+                  class="self-start sm:self-auto px-4 py-2 rounded-xl text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 transition"
+                >
+                  Oturumu Kapat
+                </button>
+              </div>
+
+              <!-- Şifre Değiştirme Formu -->
+              <form id="settings-password-form" class="space-y-4 pt-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label for="settings-new-password" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Yeni Şifre (En az 6 karakter)</label>
+                    <input 
+                      type="password" 
+                      id="settings-new-password" 
+                      required 
+                      minlength="6"
+                      placeholder="••••••••"
+                      autocomplete="new-password"
+                      class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    >
+                  </div>
+                  <div>
+                    <label for="settings-confirm-password" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Yeni Şifre Tekrar</label>
+                    <input 
+                      type="password" 
+                      id="settings-confirm-password" 
+                      required 
+                      minlength="6"
+                      placeholder="••••••••"
+                      autocomplete="new-password"
+                      class="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    >
+                  </div>
+                </div>
+
+                <div class="pt-2">
+                  <button 
+                    type="submit" 
+                    id="change-password-btn"
+                    class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-500/20 transition flex items-center justify-center disabled:opacity-50"
+                  >
+                    <span id="change-pwd-spinner" class="spinner spinner-white hidden mr-2"></span>
+                    <span>Şifreyi Güncelle</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       4. MODALLAR (MODAL DIALOGS)
+       ========================================================================= -->
+
+  <!-- Modal 1: Yeni Personel Ekle -->
+  <div id="modal-add-employee" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 hidden no-print">
+    <div class="modal-box bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100">
+      
+      <!-- Modal Başlık -->
+      <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-slate-900">Yeni Personel Ekle</h3>
+            <p class="text-xs text-slate-500 font-medium">RFID kart ve çalışan ismi tanımlayın</p>
+          </div>
+        </div>
+        <button type="button" class="close-modal-btn p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition" title="Kapat">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Form -->
+      <form id="form-add-employee" class="p-6 space-y-4">
+        <div>
+          <label for="add-emp-name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Personel Adı Soyadı</label>
+          <input 
+            type="text" 
+            id="add-emp-name" 
+            required 
+            placeholder="Örn: Ahmet Yılmaz"
+            class="w-full py-2.5 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+          >
+        </div>
+
+        <div>
+          <label for="add-emp-uid" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">RFID / NFC Kart UID</label>
+          <input 
+            type="text" 
+            id="add-emp-uid" 
+            required 
+            placeholder="Örn: 1A:2B:3C:4D veya 1A2B3C4D"
+            class="w-full py-2.5 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono uppercase text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+          >
+          <p class="text-[11px] text-slate-400 mt-1.5">Terminal ekranında veya seri port monitöründe görünen kart kimliği.</p>
+        </div>
+
+        <div class="pt-4 flex items-center justify-end space-x-3 border-t border-slate-100">
+          <button 
+            type="button" 
+            class="close-modal-btn px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+          >
+            İptal
+          </button>
+          <button 
+            type="submit" 
+            id="btn-save-add-employee"
+            class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 transition flex items-center disabled:opacity-50"
+          >
+            <span id="spinner-add-emp" class="spinner spinner-white hidden mr-2"></span>
+            <span>Personeli Kaydet</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+
+  <!-- Modal 2: Personel Düzenle -->
+  <div id="modal-edit-employee" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 hidden no-print">
+    <div class="modal-box bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100">
+      
+      <!-- Modal Başlık -->
+      <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-slate-900">Personel Düzenle</h3>
+            <p class="text-xs text-slate-500 font-medium">Personel ad ve kayıt detaylarını güncelleyin</p>
+          </div>
+        </div>
+        <button type="button" class="close-modal-btn p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition" title="Kapat">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Form -->
+      <form id="form-edit-employee" class="p-6 space-y-4">
+        <!-- Gizli Doküman ID -->
+        <input type="hidden" id="edit-emp-doc-id">
+
+        <div>
+          <label for="edit-emp-uid" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Kart UID (Değiştirilemez)</label>
+          <input 
+            type="text" 
+            id="edit-emp-uid" 
+            disabled 
+            readonly 
+            class="w-full py-2.5 px-3.5 bg-slate-100 border border-slate-200 rounded-xl text-sm font-mono text-slate-500 cursor-not-allowed"
+          >
+        </div>
+
+        <div>
+          <label for="edit-emp-name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Personel Adı Soyadı</label>
+          <input 
+            type="text" 
+            id="edit-emp-name" 
+            required 
+            placeholder="Ad Soyad"
+            class="w-full py-2.5 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+          >
+        </div>
+
+        <div class="pt-4 flex items-center justify-end space-x-3 border-t border-slate-100">
+          <button 
+            type="button" 
+            class="close-modal-btn px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+          >
+            İptal
+          </button>
+          <button 
+            type="submit" 
+            id="btn-save-edit-employee"
+            class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 transition flex items-center disabled:opacity-50"
+          >
+            <span id="spinner-edit-emp" class="spinner spinner-white hidden mr-2"></span>
+            <span>Değişiklikleri Kaydet</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+
+  <!-- Modal 3: Personel Silme Onayı -->
+  <div id="modal-delete-employee" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 hidden no-print">
+    <div class="modal-box bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100">
+      
+      <!-- Modal Başlık -->
+      <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-extrabold text-slate-900">Personeli Sil</h3>
+            <p class="text-xs text-slate-500 font-medium">Kayıt silme işlemi onayı</p>
+          </div>
+        </div>
+        <button type="button" class="close-modal-btn p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition" title="Kapat">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal İçerik -->
+      <div class="p-6 space-y-4">
+        <!-- Gizli Doküman ID -->
+        <input type="hidden" id="delete-emp-doc-id">
+
+        <p class="text-sm text-slate-700 leading-relaxed font-medium">
+          <span id="delete-emp-name" class="font-extrabold text-slate-900 underline"></span> isimli personeli silmek (pasife almak) istediğinizden emin misiniz?
+        </p>
+
+        <div class="p-3.5 rounded-2xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs leading-relaxed flex items-start space-x-2.5">
+          <svg class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>Bu işlem personeli pasife alır. ESP32 donanım terminali bir sonraki otomatik senkronizasyonda bu personelin kartını yerel LittleFS hafızasından silecektir.</span>
+        </div>
+
+        <div class="pt-4 flex items-center justify-end space-x-3 border-t border-slate-100">
+          <button 
+            type="button" 
+            class="close-modal-btn px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+          >
+            İptal
+          </button>
+          <button 
+            type="button" 
+            id="btn-confirm-delete-employee"
+            class="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold text-xs rounded-xl shadow-md shadow-rose-600/20 transition flex items-center disabled:opacity-50"
+          >
+            <span id="spinner-delete-emp" class="spinner spinner-white hidden mr-2"></span>
+            <span>Evet, Personeli Sil</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>

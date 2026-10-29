@@ -1,0 +1,17 @@
+# Arduino / PlatformIO
+.pio
+.vscode
+*.hex
+*.bin
+*.elf
+
+# Firebase cache
+.firebase/
+.firebaserc
+
+# Netlify
+.netlify/
+
+# OS files
+Thumbs.db
+.DS_Store

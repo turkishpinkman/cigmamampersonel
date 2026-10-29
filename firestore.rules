@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /employees/{employee} {
+      allow read, write: if request.auth != null;
+    }
+    match /events/{event} {
+      allow read, write: if request.auth != null;
+    }
+    match /settings/{setting} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
