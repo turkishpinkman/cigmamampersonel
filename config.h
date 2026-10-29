@@ -151,6 +151,13 @@ enum ScreenState : uint8_t {
 // VERI YAPILARI
 // ==========================================
 
+struct ShiftConfig {
+  uint8_t startHour;
+  uint8_t startMinute;
+  uint8_t endHour;
+  uint8_t endMinute;
+};
+
 struct Employee {
   char uid[24];
   char name[32];
@@ -171,13 +178,6 @@ struct LogEvent {
   unsigned long timestamp;
   char date[12];
   bool synced;
-};
-
-struct ShiftConfig {
-  uint8_t startHour;
-  uint8_t startMinute;
-  uint8_t endHour;
-  uint8_t endMinute;
 };
 
 struct SystemConfig {
