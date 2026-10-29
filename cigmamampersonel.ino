@@ -28,6 +28,7 @@
 #include "event_logger.h"
 #include "system_controller.h"
 #include "firebase_sync.h"
+#include "ota_manager.h"
 #include <esp_task_wdt.h>
 
 // Watchdog zaman asimi suresi (saniye)
@@ -206,6 +207,11 @@ void setup() {
   syncInit();
   Serial.println(F("OK"));
 
+  // 12. OTA (Uzaktan Kablosuz Kod Yukleme) Servisi
+  Serial.print(F("OTA servisi baslatiliyor... "));
+  otaInit();
+  Serial.println(F("OK"));
+
   // Watchdog baslat (ESP-IDF 2.x standardi)
   esp_task_wdt_init(WDT_TIMEOUT, true);
   esp_task_wdt_add(NULL);
@@ -214,6 +220,7 @@ void setup() {
   Serial.println(F("Sistem hazir!"));
   Serial.println(F("================================"));
 
+  // Acilista uzun/gereksiz bip kaldirildi (sadece 30ms mini tiklama sesi)
   buzzerSuccess();
 }
 
@@ -260,6 +267,9 @@ void loop() {
   // 8. Seri port komutlarini isle
   handleSerialCommands();
 
-  // 8. Sistem kararliligi icin kisa bekleme
+  // 9. OTA (Uzaktan Kod Yukleme) dinleyici
+  otaTick();
+
+  // Sistem kararliligi icin kisa bekleme
   delay(10);
 }

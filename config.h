@@ -22,7 +22,7 @@
 // Buzzer
 #define BUZZER_PIN     32
 #define BUZZER_CHANNEL 0
-#define BUZZER_FREQ    2700
+#define BUZZER_FREQ    2000
 
 // ==========================================
 // DOKUNMATIK KALIBRASYON

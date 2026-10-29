@@ -40,20 +40,20 @@ void buzzerInit() {
 }
 
 void buzzerSuccess() {
-  // Basarili islem: 100ms ON
-  static const uint16_t successPattern[] = {100};
+  // Basarili islem: Yumusak, cok kisa kibar bip (35ms)
+  static const uint16_t successPattern[] = {35};
   startPattern(successPattern, 1);
 }
 
 void buzzerError() {
-  // Hata bildirimi: 80ms ON, 80ms OFF, 80ms ON, 80ms OFF, 80ms ON
-  static const uint16_t errorPattern[] = {80, 80, 80, 80, 80};
-  startPattern(errorPattern, 5);
+  // Hata bildirimi: 50ms ON, 50ms OFF, 50ms ON
+  static const uint16_t errorPattern[] = {50, 50, 50};
+  startPattern(errorPattern, 3);
 }
 
 void buzzerWarning() {
-  // Uyari bildirimi: 100ms ON, 100ms OFF, 100ms ON
-  static const uint16_t warningPattern[] = {100, 100, 100};
+  // Uyari bildirimi: 40ms ON, 40ms OFF, 40ms ON
+  static const uint16_t warningPattern[] = {40, 40, 40};
   startPattern(warningPattern, 3);
 }
 
