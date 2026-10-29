@@ -1,10 +1,52 @@
 #include "touch_ui.h"
 #include "config.h"
 #include "display_manager.h"
+#include "storage_manager.h"
 #include <XPT2046_Touchscreen.h>
 #include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
+
+// Turkce UTF-8 karakterleri Adafruit GFX uyumlu ASCII karsiliklarina donusturur
+static String cleanTurkishChars(const char* input) {
+    if (!input) return "";
+    String out = "";
+    size_t len = strlen(input);
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = (uint8_t)input[i];
+        if (c == 0xC3 && i + 1 < len) {
+            uint8_t next = (uint8_t)input[++i];
+            switch (next) {
+                case 0xA7: out += 'c'; break; // ç
+                case 0x87: out += 'C'; break; // Ç
+                case 0xB6: out += 'o'; break; // ö
+                case 0x96: out += 'O'; break; // Ö
+                case 0xBC: out += 'u'; break; // ü
+                case 0x9C: out += 'U'; break; // Ü
+                default: break;
+            }
+        } else if (c == 0xC4 && i + 1 < len) {
+            uint8_t next = (uint8_t)input[++i];
+            switch (next) {
+                case 0x9F: out += 'g'; break; // ğ
+                case 0x9E: out += 'G'; break; // Ğ
+                case 0xB1: out += 'i'; break; // ı
+                case 0xB0: out += 'I'; break; // İ
+                default: break;
+            }
+        } else if (c == 0xC5 && i + 1 < len) {
+            uint8_t next = (uint8_t)input[++i];
+            switch (next) {
+                case 0x9F: out += 's'; break; // ş
+                case 0x9E: out += 'S'; break; // Ş
+                default: break;
+            }
+        } else if (c < 128) {
+            out += (char)c;
+        }
+    }
+    return out;
+}
 
 // Yeni arayuz paleti: koyu lacivert, turkuaz ve amber.
 #define UI_BG       0x0864
@@ -19,26 +61,28 @@
 static void drawTextFont(int16_t x, int16_t baseline, const char* text, uint16_t color,
                          const GFXfont* font = &FreeSansBold12pt7b) {
     if (!text) return;
+    String clean = cleanTurkishChars(text);
     tft.setTextSize(1);
     tft.setFont(font);
     tft.setTextColor(color);
     tft.setCursor(x, baseline);
-    tft.print(text);
+    tft.print(clean);
     tft.setFont();
 }
 
 static void drawCenteredFont(int16_t baseline, const char* text, uint16_t color,
                              const GFXfont* font = &FreeSansBold12pt7b) {
     if (!text) return;
+    String clean = cleanTurkishChars(text);
     tft.setTextSize(1);
     tft.setFont(font);
     int16_t x1, y1;
     uint16_t textW, textH;
-    tft.getTextBounds(text, 0, 0, &x1, &y1, &textW, &textH);
+    tft.getTextBounds(clean.c_str(), 0, 0, &x1, &y1, &textW, &textH);
     int16_t x = (SCREEN_W - (int16_t)textW) / 2 - x1;
     tft.setTextColor(color);
     tft.setCursor(x, baseline);
-    tft.print(text);
+    tft.print(clean);
     tft.setFont();
 }
 
@@ -46,26 +90,28 @@ static void drawCenteredInRect(int16_t x, int16_t y, int16_t w, int16_t h,
                                const char* text, uint16_t color,
                                const GFXfont* font = &FreeSansBold12pt7b) {
     if (!text || !text[0]) return;
+    String clean = cleanTurkishChars(text);
     tft.setTextSize(1);
     tft.setFont(font);
     int16_t x1, y1;
     uint16_t textW, textH;
-    tft.getTextBounds(text, 0, 0, &x1, &y1, &textW, &textH);
+    tft.getTextBounds(clean.c_str(), 0, 0, &x1, &y1, &textW, &textH);
     int16_t tx = x + (w - (int16_t)textW) / 2 - x1;
     int16_t baseline = y + (h - (int16_t)textH) / 2 - y1;
     tft.setTextColor(color);
     tft.setCursor(tx, baseline);
-    tft.print(text);
+    tft.print(clean);
     tft.setFont();
 }
 
 static void drawSmallText(int16_t x, int16_t y, const char* text, uint16_t color) {
     if (!text) return;
+    String clean = cleanTurkishChars(text);
     tft.setFont();
     tft.setTextSize(1);
     tft.setTextColor(color);
     tft.setCursor(x, y);
-    tft.print(text);
+    tft.print(clean);
 }
 
 static void drawScreenHeader(const char* title, uint16_t accent = UI_TEAL) {
@@ -306,7 +352,17 @@ void uiDrawMainScreen(const char* timeStr, int totalEmp, int activeEmp, bool wif
         displayClear(UI_BG);
         tft.fillRect(0, 0, SCREEN_W, 32, UI_PANEL);
         tft.fillRect(0, 0, 5, 32, UI_TEAL);
-        drawTextFont(14, 23, "CIGMAMAM", UI_WHITE);
+        
+        // Surum numarasini al (LittleFS'ten veya varsayilandan)
+        int currentVer = CURRENT_FIRMWARE_VERSION;
+        if (storageExists("/ota_version.txt")) {
+            int sv = storageRead("/ota_version.txt").toInt();
+            if (sv > currentVer) currentVer = sv;
+        }
+        char titleBuf[32];
+        snprintf(titleBuf, sizeof(titleBuf), "CIGMAMAM v%d", currentVer);
+        drawTextFont(14, 23, titleBuf, UI_WHITE, &FreeSansBold9pt7b);
+
         drawWifiMark(286, 13, wifiOn);
         drawSmallText(264, 27, wifiOn ? "ONLINE" : "OFFLINE", wifiOn ? UI_TEAL : UI_RED);
 
