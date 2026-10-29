@@ -725,6 +725,11 @@ function startFirestoreListeners() {
 
       state.events = list;
 
+      // OTOMATİK PERSONEL SENKRONİZASYONU:
+      // Eğer bir personel cihazdan hızlıca eklenip kart bastıysa ancak Firestore 'employees'
+      // koleksiyonuna henüz yazılmamışsa, gelen events kayıtlarından bunu anında yakala ve employees'e ekle!
+      syncMissingEmployeesFromEvents(list);
+
       if (state.currentTab === 'dashboard') renderDashboard();
       if (state.currentTab === 'records') applyRecordsFilter();
       if (state.currentTab === 'reports') generateReport();
@@ -745,6 +750,41 @@ function stopFirestoreListeners() {
   if (state.subscriptions.events) {
     state.subscriptions.events();
     state.subscriptions.events = null;
+  }
+}
+
+/**
+ * Gelen giriş-çıkış olaylarından henüz employees koleksiyonunda olmayan personelleri otomatik kurtarır/oluşturur.
+ */
+async function syncMissingEmployeesFromEvents(eventsList) {
+  if (!db || !eventsList || eventsList.length === 0) return;
+
+  const existingUids = new Set((state.employees || []).map(e => e.uid));
+  const seenInBatch = new Set();
+
+  for (const evt of eventsList) {
+    if (!evt.uid || existingUids.has(evt.uid) || seenInBatch.has(evt.uid)) continue;
+    seenInBatch.add(evt.uid);
+
+    const safeDocId = evt.uid.replace(/:/g, '');
+    let empState = 0;
+    if (evt.type === 'GIRIS' || evt.type === 'MOLA_BIT') empState = 1;
+    else if (evt.type === 'MOLA_BAS') empState = 2;
+    else if (evt.type === 'CIKIS' || evt.type === 'OTO_CIKIS') empState = 0;
+
+    try {
+      await db.collection('employees').doc(safeDocId).set({
+        uid: evt.uid,
+        name: evt.employeeName || `Personel_${evt.uid.slice(-5)}`,
+        state: empState,
+        active: true,
+        lastUpdate: evt.timestamp || Math.floor(Date.now() / 1000),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log(`[Otomatik Eşitleme] Eksik personel employees koleksiyonuna eklendi: ${evt.uid} (${evt.employeeName})`);
+    } catch (err) {
+      console.error('[Otomatik personel ekleme hatası]', err);
+    }
   }
 }
 
