@@ -643,10 +643,9 @@ void systemHandleTouch(int16_t x, int16_t y) {
                 _currentScreen = SCR_INFO;
                 _screenTimer = millis();
                 if (wifiIsConnected()) {
-                    syncUploadAllEmployees();
-                    syncUploadPendingEvents();
-                    syncDownloadEmployees();
                     syncDownloadSettings();
+                    syncDownloadEmployees();
+                    syncUploadPendingEvents();
                     uiDrawInfoScreen("", "Senkronizasyon Basarili!", COLOR_SUCCESS);
                     buzzerSuccess();
                 } else {

@@ -641,8 +641,7 @@ void syncTick() {
   // Personel listesi indirme (5 dakikada bir)
   if (now - _lastEmployeeSync > SYNC_EMPLOYEE_INTERVAL || _lastEmployeeSync == 0) {
     _lastEmployeeSync = now;
-    syncUploadAllEmployees();   // Once cihazdaki kayitli personelleri Firestore'a gonder
-    syncDownloadEmployees();    // Sonra Firestore'daki degisiklikleri cek
+    syncDownloadEmployees();    // Firestore'daki degisiklikleri cek
   }
 
   // Ayar indirme (10 dakikada bir)
