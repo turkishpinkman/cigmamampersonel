@@ -63,12 +63,12 @@ bool nfcRead(char* uidBuf, size_t bufLen) {
   uint8_t uid[7] = {0};
   uint8_t uidLength = 0;
   
-  // 200ms timeout ile kart ara
+  // 25ms timeout ile kart ara (loop akisini ve dokunmatigi kilitlememek icin hizli kontrol)
   bool success = pn532.readPassiveTargetID(
     PN532_MIFARE_ISO14443A, 
     uid, 
     &uidLength, 
-    200  // 200ms timeout - kararli ve hizli
+    25  // 25ms timeout - UI ve dokunmatik tepkiselligi icin optimize
   );
   
   if (!success || uidLength == 0) {

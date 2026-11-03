@@ -498,9 +498,32 @@ function setupAuthListener() {
     return;
   }
 
-  auth.onAuthStateChanged((user) => {
+  auth.onAuthStateChanged(async (user) => {
     hideLoader();
     if (user) {
+      // 5.1 Güvenlik ve Rol Doğrulaması (Custom Claims & Admin Kontrolü)
+      try {
+        const tokenResult = await user.getIdTokenResult();
+        const claims = tokenResult.claims || {};
+        const isAdmin = !!(
+          claims.admin === true ||
+          claims.role === 'admin' ||
+          user.email === 'yonetici@cigmamam.com' ||
+          user.email === 'admin@cigmamam.com'
+        );
+
+        if (!isAdmin) {
+          showToast('Yetkisiz Hesap: Bu yönetim paneline yalnızca yetkili yöneticiler erişebilir.', 'error');
+          await auth.signOut();
+          return;
+        }
+      } catch (err) {
+        console.error('[Yetki Doğrulama Hatası]', err);
+        showToast('Kullanıcı yetkileri denetlenirken bir hata oluştu.', 'error');
+        await auth.signOut();
+        return;
+      }
+
       state.currentUser = user;
       document.getElementById('login-view').classList.add('hidden');
       document.getElementById('app-view').classList.remove('hidden');
@@ -735,7 +758,7 @@ function startFirestoreListeners() {
       // OTOMATİK PERSONEL SENKRONİZASYONU:
       // SADECE employees koleksiyonu tamamen yüklendikten sonra ve eksik bir kayıt varsa çalışır!
       if (state.employeesLoaded) {
-        syncMissingEmployeesFromEvents(list);
+        // syncMissingEmployeesFromEvents(list);
       }
 
       if (state.currentTab === 'dashboard') renderDashboard();
@@ -842,20 +865,47 @@ function updateShiftBadges() {
 // 7. TAB 1: GÖSTERGE PANELİ (DASHBOARD)
 // =============================================================================
 
+/**
+ * Personelin canli durumunu bugunun hareket kayitlarina gore belirler
+ * Firestore emp.state degeri cevrimdisi kalmis olsa dahi olay akisindan anlik tespit eder.
+ */
+function getEmployeeEffectiveState(emp, todayEvents) {
+  const cleanUid = toSafeDocId(emp.uid || emp.id);
+  
+  // Bugun bu personele ait hareketleri filtrele
+  const empEvents = todayEvents.filter(evt => toSafeDocId(evt.uid) === cleanUid);
+
+  if (empEvents.length > 0) {
+    // En yeni olay ilk gelecek sekilde sirala
+    empEvents.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const lastEvt = empEvents[0];
+
+    if (lastEvt.type === 'GIRIS' || lastEvt.type === 'MOLA_BIT') {
+      return { state: 1, lastActionTime: lastEvt.timestamp, lastType: lastEvt.type };
+    } else if (lastEvt.type === 'MOLA_BAS') {
+      return { state: 2, lastActionTime: lastEvt.timestamp, lastType: lastEvt.type };
+    } else if (lastEvt.type === 'CIKIS' || lastEvt.type === 'OTO_CIKIS') {
+      return { state: 0, lastActionTime: lastEvt.timestamp, lastType: lastEvt.type };
+    }
+  }
+
+  // Bugun hareket yoksa Firestore durumunu veya 0 (Disarida) kullan
+  return { 
+    state: emp.state !== undefined ? emp.state : 0, 
+    lastActionTime: emp.lastUpdate || 0,
+    lastType: null 
+  };
+}
+
 function renderDashboard() {
   const activeEmployees = state.employees.filter(e => e.active);
   const totalCount = activeEmployees.length;
 
-  // Şu an içeride olanlar: state === 1 (Çalışıyor) veya state === 2 (Molada)
-  const workingEmployees = activeEmployees.filter(e => e.state === 1);
-  const onBreakEmployees = activeEmployees.filter(e => e.state === 2);
-  const presentEmployees = [...workingEmployees, ...onBreakEmployees];
-
-  // Bugün geç kalanlar hesaplaması
+  // Bugunun yerel tarih stringi (YYYY-MM-DD)
   const todayStr = getLocalDateString();
-  const shiftStartMinutes = (state.settings.shiftStartHour * 60) + state.settings.shiftStartMinute;
+  const globalShiftStartMin = (state.settings.shiftStartHour * 60) + (state.settings.shiftStartMinute || 0);
 
-  // Bugünün tüm olaylarını al
+  // Bugune ait tum olaylari al
   const todayEvents = state.events.filter(evt => {
     if (evt.date && evt.date === todayStr) return true;
     if (evt.timestamp) {
@@ -865,117 +915,261 @@ function renderDashboard() {
     return false;
   });
 
-  // Her personel için bugünün ilk GIRIS olayını bul
-  const firstGirisByUid = {};
+  // Her personel icin bugunun ilk GIRIS olayini tespit et (Gec kalma tespiti)
+  const firstGirisByCleanUid = {};
   todayEvents.forEach(evt => {
-    if (evt.type === 'GIRIS' && evt.timestamp) {
-      if (!firstGirisByUid[evt.uid] || evt.timestamp < firstGirisByUid[evt.uid].timestamp) {
-        firstGirisByUid[evt.uid] = evt;
+    if (evt.type === 'GIRIS' && evt.timestamp && evt.uid) {
+      const cleanUid = toSafeDocId(evt.uid);
+      if (!firstGirisByCleanUid[cleanUid] || evt.timestamp < firstGirisByCleanUid[cleanUid].timestamp) {
+        firstGirisByCleanUid[cleanUid] = evt;
       }
     }
   });
 
-  let lateCount = 0;
-  Object.values(firstGirisByUid).forEach(evt => {
-    const d = new Date(evt.timestamp * 1000);
-    const eventMinutes = (d.getHours() * 60) + d.getMinutes();
-    if (eventMinutes > shiftStartMinutes) {
-      lateCount++;
+  // Her personelin canli durumunu ve gec kalma durumunu hesapla
+  const lateList = [];
+  const evaluatedEmployees = activeEmployees.map(emp => {
+    const cleanUid = toSafeDocId(emp.uid || emp.id);
+    const liveStatus = getEmployeeEffectiveState(emp, todayEvents);
+    const firstGiris = firstGirisByCleanUid[cleanUid];
+
+    // Gec kalma analizi (Personelin ozel mesaisi varsa onu baz alir)
+    if (firstGiris) {
+      const d = new Date(firstGiris.timestamp * 1000);
+      const entryMinutes = (d.getHours() * 60) + d.getMinutes();
+
+      let scheduledStartMin = globalShiftStartMin;
+      let shiftText = `${String(state.settings.shiftStartHour).padStart(2, '0')}:${String(state.settings.shiftStartMinute || 0).padStart(2, '0')}`;
+
+      if (emp.hasCustomShift && emp.shiftStartHour !== null && emp.shiftStartHour !== undefined) {
+        scheduledStartMin = (emp.shiftStartHour * 60) + (emp.shiftStartMinute || 0);
+        shiftText = `${String(emp.shiftStartHour).padStart(2, '0')}:${String(emp.shiftStartMinute || 0).padStart(2, '0')}`;
+      }
+
+      if (entryMinutes > scheduledStartMin) {
+        const diffMinutes = entryMinutes - scheduledStartMin;
+        lateList.push({
+          uid: emp.uid,
+          name: emp.name,
+          shiftText: shiftText,
+          entryTime: formatTimeOnly(firstGiris.timestamp),
+          fullEntryTime: formatDateTime(firstGiris.timestamp),
+          lateMinutes: diffMinutes,
+          currentState: liveStatus.state
+        });
+      }
     }
+
+    // Firestore ile durum uyusmazligi varsa sessizce guncelle
+    if (db && emp.state !== liveStatus.state) {
+      emp.state = liveStatus.state;
+      emp.lastUpdate = liveStatus.lastActionTime;
+      db.collection('employees').doc(cleanUid).set({
+        state: liveStatus.state,
+        lastUpdate: liveStatus.lastActionTime
+      }, { merge: true }).catch(() => {});
+    }
+
+    return {
+      ...emp,
+      state: liveStatus.state,
+      lastActionTime: liveStatus.lastActionTime
+    };
   });
 
-  // Stat Kartlarını Güncelle
-  document.getElementById('stat-total-employees').textContent = totalCount;
-  document.getElementById('stat-present-now').textContent = presentEmployees.length;
-  document.getElementById('stat-on-break').textContent = onBreakEmployees.length;
-  document.getElementById('stat-late-arrivals').textContent = lateCount;
+  // Su an iceride olanlar: state === 1 (Calisiyor) veya state === 2 (Molada)
+  const workingEmployees = evaluatedEmployees.filter(e => e.state === 1);
+  const onBreakEmployees = evaluatedEmployees.filter(e => e.state === 2);
+  const presentEmployees = [...workingEmployees, ...onBreakEmployees];
 
-  // Şu An İçeride Olan Personeller Listesi
+  // 1. Stat Kartlarini Guncelle
+  const statTotalEl = document.getElementById('stat-total-employees');
+  const statPresentEl = document.getElementById('stat-present-now');
+  const statBreakEl = document.getElementById('stat-on-break');
+  const statLateEl = document.getElementById('stat-late-arrivals');
+  const latePulseEl = document.getElementById('late-status-pulse');
+
+  if (statTotalEl) statTotalEl.textContent = totalCount;
+  if (statPresentEl) statPresentEl.textContent = presentEmployees.length;
+  if (statBreakEl) statBreakEl.textContent = onBreakEmployees.length;
+  if (statLateEl) statLateEl.textContent = lateList.length;
+  if (latePulseEl) latePulseEl.classList.toggle('hidden', lateList.length === 0);
+
+  // 2. Gec Kalanlar Hizli Bildirim Paneli (late-arrivals-alert-container)
+  const lateBannerEl = document.getElementById('late-arrivals-alert-container');
+  const lateBadgeEl = document.getElementById('late-alert-badge');
+  const latePillsEl = document.getElementById('late-arrivals-pills');
+
+  if (lateBannerEl) {
+    if (lateList.length > 0) {
+      lateBannerEl.classList.remove('hidden');
+      if (lateBadgeEl) lateBadgeEl.textContent = `${lateList.length} Kişi`;
+      if (latePillsEl) {
+        latePillsEl.innerHTML = lateList.map(item => `
+          <span class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300 shadow-sm">
+            <span class="w-2 h-2 rounded-full bg-rose-500 mr-2 animate-ping"></span>
+            <strong>${escapeHtml(item.name)}</strong>
+            <span class="mx-1 text-rose-400">|</span>
+            Giriş: ${item.entryTime}
+            <span class="mx-1 text-rose-400">|</span>
+            <span class="font-extrabold text-rose-900">${item.lateMinutes} dk geç</span>
+          </span>
+        `).join('');
+      }
+    } else {
+      lateBannerEl.classList.add('hidden');
+    }
+  }
+
+  // 3. Gec Kalanlar Modal Tablosu (late-modal-table-container)
+  const lateModalTableEl = document.getElementById('late-modal-table-container');
+  if (lateModalTableEl) {
+    if (lateList.length === 0) {
+      lateModalTableEl.innerHTML = `
+        <div class="py-12 text-center text-slate-400">
+          <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          </div>
+          <p class="text-sm font-semibold text-slate-700">Bugün mesaiye geç başlayan personel bulunmuyor.</p>
+          <p class="text-xs text-slate-400 mt-1">Tüm personeller vardiya başlangıç saatinden önce veya zamanında giriş yaptı.</p>
+        </div>
+      `;
+    } else {
+      lateModalTableEl.innerHTML = `
+        <div class="overflow-x-auto rounded-2xl border border-slate-200">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Personel</th>
+                <th class="py-3 px-4 text-center">Vardiya Başlangıcı</th>
+                <th class="py-3 px-4 text-center">İlk Giriş Saati</th>
+                <th class="py-3 px-4 text-center">Gecikme Süresi</th>
+                <th class="py-3 px-4 text-center">Anlık Durumu</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 bg-white font-medium text-slate-700">
+              ${lateList.map(item => {
+                const stateInfo = getEmployeeStateInfo(item.currentState);
+                return `
+                  <tr class="hover:bg-rose-50/40 transition">
+                    <td class="py-3.5 px-4 font-semibold text-slate-900">
+                      <div class="flex items-center space-x-2.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 flex-shrink-0"></span>
+                        <div>
+                          <p class="text-sm font-bold text-slate-900">${escapeHtml(item.name)}</p>
+                          <p class="text-[11px] font-mono text-slate-400">${escapeHtml(item.uid)}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="py-3.5 px-4 text-center font-bold text-slate-600">${item.shiftText}</td>
+                    <td class="py-3.5 px-4 text-center font-extrabold text-slate-900">${item.entryTime}</td>
+                    <td class="py-3.5 px-4 text-center">
+                      <span class="px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-700 border border-rose-300">
+                        +${item.lateMinutes} Dakika
+                      </span>
+                    </td>
+                    <td class="py-3.5 px-4 text-center">
+                      <span class="text-xs px-2.5 py-0.5 rounded-full font-medium border ${stateInfo.badgeClass}">
+                        ${stateInfo.label}
+                      </span>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  }
+
+  // 4. Su An Iceride Olan Personeller Listesi
   const presentListEl = document.getElementById('present-employees-list');
   const presentCountBadge = document.getElementById('present-count-badge');
-  presentCountBadge.textContent = `${presentEmployees.length} Kişi`;
-
-  if (presentEmployees.length === 0) {
-    presentListEl.innerHTML = `
-      <div class="py-10 text-center text-slate-400">
-        <svg class="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
-        </svg>
-        <p class="text-xs">Şu anda içeride personel bulunmuyor.</p>
-      </div>
-    `;
-  } else {
-    presentListEl.innerHTML = presentEmployees.map(emp => {
-      const stateInfo = getEmployeeStateInfo(emp.state);
-      const lastActionTime = emp.lastUpdate ? formatTimeOnly(emp.lastUpdate) : '--:--';
-
-      return `
-        <div class="flex items-center justify-between p-3 hover:bg-slate-50 transition rounded-xl">
-          <div class="flex items-center space-x-3 min-w-0">
-            <span class="w-2.5 h-2.5 rounded-full ${stateInfo.dotColor} flex-shrink-0"></span>
-            <div class="min-w-0">
-              <p class="text-sm font-semibold text-slate-800 truncate">${escapeHtml(emp.name)}</p>
-              <p class="text-[11px] font-mono text-slate-400">${escapeHtml(emp.uid)}</p>
-            </div>
-          </div>
-          <div class="flex items-center space-x-2 text-right">
-            <span class="text-[11px] text-slate-400 tabular-nums">Son: ${lastActionTime}</span>
-            <span class="text-xs px-2.5 py-0.5 rounded-full font-medium border ${stateInfo.badgeClass}">
-              ${stateInfo.label}
-            </span>
-          </div>
-        </div>
-      `;
-    }).join('');
+  if (presentCountBadge) {
+    presentCountBadge.textContent = `${presentEmployees.length} Kişi`;
   }
 
-  // Bugünün Aktivite Akışı (Son 20 Olay)
-  const activityFeedEl = document.getElementById('today-activity-feed');
-  if (todayEvents.length === 0) {
-    activityFeedEl.innerHTML = `
-      <div class="py-10 text-center text-slate-400">
-        <svg class="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <p class="text-xs">Bugün için henüz bir giriş-çıkış hareketi yok.</p>
-      </div>
-    `;
-  } else {
-    // En yeni ilk gelecek şekilde sırala
-    const sortedToday = [...todayEvents].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 20);
-
-    activityFeedEl.innerHTML = sortedToday.map(evt => {
-      const typeInfo = getEventTypeInfo(evt.type);
-      const timeStr = formatTimeOnly(evt.timestamp);
-
-      return `
-        <div class="flex items-center justify-between p-3 hover:bg-slate-50 transition rounded-xl">
-          <div class="flex items-center space-x-3 min-w-0">
-            <span class="w-2 h-2 rounded-full ${typeInfo.dotColor} flex-shrink-0"></span>
-            <div class="min-w-0">
-              <p class="text-sm font-medium text-slate-800 truncate">${escapeHtml(evt.employeeName)}</p>
-              <p class="text-[11px] text-slate-400 flex items-center space-x-1">
-                <span>Cihaz: ${escapeHtml(evt.deviceId || 'ESP32')}</span>
-                <span>&bull;</span>
-                <span class="font-mono">${escapeHtml(evt.uid)}</span>
-              </p>
-            </div>
-          </div>
-          <div class="flex items-center space-x-2.5 text-right">
-            <span class="text-xs font-semibold text-slate-600 tabular-nums">${timeStr}</span>
-            <span class="text-xs px-2.5 py-0.5 rounded-full font-medium border ${typeInfo.badgeClass}">
-              ${typeInfo.label}
-            </span>
-          </div>
+  if (presentListEl) {
+    if (presentEmployees.length === 0) {
+      presentListEl.innerHTML = `
+        <div class="py-10 text-center text-slate-400">
+          <svg class="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
+          </svg>
+          <p class="text-xs">Şu anda içeride personel bulunmuyor.</p>
         </div>
       `;
-    }).join('');
+    } else {
+      presentListEl.innerHTML = presentEmployees.map(emp => {
+        const stateInfo = getEmployeeStateInfo(emp.state);
+        const lastActionTime = emp.lastActionTime ? formatTimeOnly(emp.lastActionTime) : (emp.lastUpdate ? formatTimeOnly(emp.lastUpdate) : '--:--');
+
+        return `
+          <div class="flex items-center justify-between p-3 hover:bg-slate-50 transition rounded-xl">
+            <div class="flex items-center space-x-3 min-w-0">
+              <span class="w-2.5 h-2.5 rounded-full ${stateInfo.dotColor} flex-shrink-0"></span>
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-slate-800 truncate">${escapeHtml(emp.name)}</p>
+                <p class="text-[11px] font-mono text-slate-400">${escapeHtml(emp.uid)}</p>
+              </div>
+            </div>
+            <div class="flex items-center space-x-2 text-right">
+              <span class="text-[11px] text-slate-400 tabular-nums">Son: ${lastActionTime}</span>
+              <span class="text-xs px-2.5 py-0.5 rounded-full font-medium border ${stateInfo.badgeClass}">
+                ${stateInfo.label}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 5. Bugunun Aktivite Akisi (Son 20 Olay)
+  const activityFeedEl = document.getElementById('today-activity-feed');
+  if (activityFeedEl) {
+    if (todayEvents.length === 0) {
+      activityFeedEl.innerHTML = `
+        <div class="py-10 text-center text-slate-400">
+          <svg class="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <p class="text-xs">Bugün için henüz bir giriş-çıkış hareketi yok.</p>
+        </div>
+      `;
+    } else {
+      const sortedToday = [...todayEvents].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 20);
+
+      activityFeedEl.innerHTML = sortedToday.map(evt => {
+        const typeInfo = getEventTypeInfo(evt.type);
+        const timeStr = formatTimeOnly(evt.timestamp);
+
+        return `
+          <div class="flex items-center justify-between p-3 hover:bg-slate-50 transition rounded-xl">
+            <div class="flex items-center space-x-3 min-w-0">
+              <span class="w-2 h-2 rounded-full ${typeInfo.dotColor} flex-shrink-0"></span>
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-slate-800 truncate">${escapeHtml(evt.employeeName)}</p>
+                <p class="text-[11px] text-slate-400 flex items-center space-x-1">
+                  <span>Cihaz: ${escapeHtml(evt.deviceId || 'ESP32')}</span>
+                  <span>&bull;</span>
+                  <span class="font-mono">${escapeHtml(evt.uid)}</span>
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center space-x-2.5 text-right">
+              <span class="text-xs font-semibold text-slate-600 tabular-nums">${timeStr}</span>
+              <span class="text-xs px-2.5 py-0.5 rounded-full font-medium border ${typeInfo.badgeClass}">
+                ${typeInfo.label}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
   }
 }
-
-// =============================================================================
-// 8. TAB 2: PERSONELLER (EMPLOYEES)
-// =============================================================================
 
 function renderEmployeesTable() {
   const tableBody = document.getElementById('employees-table-body');
@@ -988,6 +1182,26 @@ function renderEmployeesTable() {
 
   // Sadece aktif olanları listele (silinmemiş olanlar)
   let list = state.employees.filter(e => e.active);
+
+  // Canli durum tespiti (bugunku olay akisi)
+  const todayStr = getLocalDateString();
+  const todayEvents = state.events.filter(evt => {
+    if (evt.date && evt.date === todayStr) return true;
+    if (evt.timestamp) {
+      const evtDate = getLocalDateString(new Date(evt.timestamp * 1000));
+      return evtDate === todayStr;
+    }
+    return false;
+  });
+
+  list = list.map(emp => {
+    const live = getEmployeeEffectiveState(emp, todayEvents);
+    return {
+      ...emp,
+      state: live.state,
+      lastActionTime: live.lastActionTime
+    };
+  });
 
   // Filtreler
   if (searchTerm) {
@@ -1012,7 +1226,7 @@ function renderEmployeesTable() {
 
   tableBody.innerHTML = list.map((emp, index) => {
     const stateInfo = getEmployeeStateInfo(emp.state);
-    const lastTime = emp.lastUpdate ? formatDateTime(emp.lastUpdate) : '-';
+    const lastTime = emp.lastActionTime ? formatDateTime(emp.lastActionTime) : (emp.lastUpdate ? formatDateTime(emp.lastUpdate) : '-');
 
     return `
       <tr class="hover:bg-slate-50 transition">
@@ -1041,15 +1255,15 @@ function renderEmployeesTable() {
         </td>
         <td class="py-3.5 px-4 text-xs text-slate-500 tabular-nums">${lastTime}</td>
         <td class="py-3.5 px-4 text-right space-x-1">
-          <button onclick="handleOpenEditModal('${emp.id}', '${encodeURIComponent(emp.name)}', '${encodeURIComponent(emp.uid)}')" 
+          <button data-action="edit" data-id="${escapeHtml(emp.id)}" 
             class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Düzenle">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
             </svg>
           </button>
-          <button onclick="handleOpenDeleteModal('${emp.id}', '${encodeURIComponent(emp.name)}')" 
+          <button data-action="delete" data-id="${escapeHtml(emp.id)}" 
             class="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="Sil">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
             </svg>
           </button>
@@ -1062,6 +1276,22 @@ function renderEmployeesTable() {
 // Arama & Filtre dinleyicileri
 document.getElementById('employee-search-input')?.addEventListener('input', renderEmployeesTable);
 document.getElementById('employee-status-filter')?.addEventListener('change', renderEmployeesTable);
+
+// Güvenli Olay Dinleyici (Event Delegation - Stored XSS Koruması):
+document.getElementById('employees-table-body')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
+  const emp = state.employees.find(item => item.id === id);
+  if (!emp) return;
+
+  if (action === 'edit') {
+    handleOpenEditModal(emp.id, emp.name, emp.uid);
+  } else if (action === 'delete') {
+    handleOpenDeleteModal(emp.id, emp.name);
+  }
+});
 
 // 1. Yeni Personel Ekle
 document.getElementById('open-add-employee-modal')?.addEventListener('click', () => {
@@ -1158,9 +1388,9 @@ if (formAddEmployee) {
 }
 
 // 2. Personel Düzenle
-window.handleOpenEditModal = function(docId, encodedName, encodedUid) {
-  const name = decodeURIComponent(encodedName);
-  const uid = decodeURIComponent(encodedUid);
+window.handleOpenEditModal = function(docId, rawOrEncodedName, rawOrEncodedUid) {
+  const name = rawOrEncodedName ? (String(rawOrEncodedName).includes('%') ? decodeURIComponent(rawOrEncodedName) : rawOrEncodedName) : '';
+  const uid = rawOrEncodedUid ? (String(rawOrEncodedUid).includes('%') ? decodeURIComponent(rawOrEncodedUid) : rawOrEncodedUid) : '';
 
   document.getElementById('edit-emp-doc-id').value = docId;
   document.getElementById('edit-emp-uid').value = uid;
@@ -1249,8 +1479,8 @@ if (formEditEmployee) {
 }
 
 // 3. Personel Sil
-window.handleOpenDeleteModal = function(docId, encodedName) {
-  const name = decodeURIComponent(encodedName);
+window.handleOpenDeleteModal = function(docId, rawOrEncodedName) {
+  const name = rawOrEncodedName ? (String(rawOrEncodedName).includes('%') ? decodeURIComponent(rawOrEncodedName) : rawOrEncodedName) : '';
   document.getElementById('delete-emp-doc-id').value = docId;
   document.getElementById('delete-emp-name').textContent = name;
   openModal('modal-delete-employee');
@@ -1581,11 +1811,9 @@ function generateReport() {
   const shiftStartMin = (state.settings.shiftStartHour * 60) + state.settings.shiftStartMinute;
   const shiftEndMin = (state.settings.shiftEndHour * 60) + state.settings.shiftEndMinute;
 
-  // Personel bazında gruplama yapısı:
-  // employeeMap[uid] = { name, days: { dateStr: { firstGiris, lastCikis, breaksCount } } }
+  // Personel bazında gruplama yapısı
   const employeeMap = {};
 
-  // Önce aktif veya bilinen personelleri haritaya ekle
   state.employees.forEach(emp => {
     employeeMap[emp.uid] = {
       name: emp.name,
@@ -1594,7 +1822,6 @@ function generateReport() {
     };
   });
 
-  // Olayları işle
   filteredEvents.forEach(evt => {
     const uid = evt.uid;
     if (!uid) return;
@@ -1614,13 +1841,16 @@ function generateReport() {
       employeeMap[uid].days[evtDate] = {
         firstGiris: null,
         lastCikis: null,
-        breaksCount: 0
+        lastCikisType: null,
+        breaksCount: 0,
+        events: []
       };
     }
 
     const dayObj = employeeMap[uid].days[evtDate];
-    const ts = evt.timestamp;
+    dayObj.events.push(evt);
 
+    const ts = evt.timestamp;
     if (evt.type === 'GIRIS' && ts) {
       if (!dayObj.firstGiris || ts < dayObj.firstGiris) {
         dayObj.firstGiris = ts;
@@ -1628,6 +1858,7 @@ function generateReport() {
     } else if ((evt.type === 'CIKIS' || evt.type === 'OTO_CIKIS') && ts) {
       if (!dayObj.lastCikis || ts > dayObj.lastCikis) {
         dayObj.lastCikis = ts;
+        dayObj.lastCikisType = evt.type;
       }
     } else if (evt.type === 'MOLA_BAS') {
       dayObj.breaksCount++;
@@ -1641,9 +1872,10 @@ function generateReport() {
   let totalBreaksAll = 0;
 
   const reportRows = [];
+  const dailyBreakRows = [];
 
   Object.values(employeeMap).forEach(emp => {
-    const dayKeys = Object.keys(emp.days);
+    const dayKeys = Object.keys(emp.days).sort();
     let workDaysCount = 0;
     let lateCount = 0;
     let earlyExitCount = 0;
@@ -1664,6 +1896,45 @@ function generateReport() {
       const dayData = emp.days[dateKey];
       breakCount += dayData.breaksCount;
 
+      // Olayları kronolojik sıraya diz
+      dayData.events.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+      // Molaları başlangıç-bitiş şeklinde eşleştir
+      const breakPairs = [];
+      let activeBreakStart = null;
+
+      dayData.events.forEach(ev => {
+        if (ev.type === 'MOLA_BAS') {
+          activeBreakStart = ev.timestamp;
+        } else if (ev.type === 'MOLA_BIT' && activeBreakStart) {
+          const sDate = new Date(activeBreakStart * 1000);
+          const eDate = new Date(ev.timestamp * 1000);
+          const dur = Math.max(1, Math.round((ev.timestamp - activeBreakStart) / 60));
+          breakPairs.push({
+            start: sDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            end: eDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            durationMin: dur
+          });
+          activeBreakStart = null;
+        } else if ((ev.type === 'CIKIS' || ev.type === 'OTO_CIKIS') && activeBreakStart) {
+          const sDate = new Date(activeBreakStart * 1000);
+          const eDate = new Date(ev.timestamp * 1000);
+          const dur = Math.max(1, Math.round((ev.timestamp - activeBreakStart) / 60));
+          breakPairs.push({
+            start: sDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            end: eDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + ' (Çıkış)',
+            durationMin: dur
+          });
+          activeBreakStart = null;
+        }
+      });
+
+      const dayTotalBreakMin = breakPairs.reduce((sum, b) => sum + b.durationMin, 0);
+
+      let isLate = false;
+      let isEarly = false;
+      let isMissingExit = false;
+
       // Eğer o gün en az 1 GIRIS varsa iş günü sayılır
       if (dayData.firstGiris) {
         workDaysCount++;
@@ -1672,22 +1943,76 @@ function generateReport() {
         arrivalMinutesSum += arrivalMin;
         arrivalCount++;
 
-        // Geç kalma kontrolü (personelin özel veya genel mesaisine göre)
-        if (arrivalMin > empShiftStartMin) {
+        // Geç kalma kontrolü
+        if (empShiftStartMin <= empShiftEndMin ? arrivalMin > empShiftStartMin : (arrivalMin > empShiftStartMin || arrivalMin < empShiftEndMin)) {
           lateCount++;
+          isLate = true;
         }
       }
 
-      // Erken çıkış kontrolü (personelin özel veya genel mesaisine göre)
+      // Erken çıkış kontrolü (Oto-çıkış olanları erken çıkış sayma, personeli mağdur etme)
       if (dayData.lastCikis) {
-        const dDep = new Date(dayData.lastCikis * 1000);
-        const depMin = (dDep.getHours() * 60) + dDep.getMinutes();
-        departureMinutesSum += depMin;
-        departureCount++;
+        if (dayData.lastCikisType !== 'OTO_CIKIS') {
+          const dDep = new Date(dayData.lastCikis * 1000);
+          const depMin = (dDep.getHours() * 60) + dDep.getMinutes();
+          departureMinutesSum += depMin;
+          departureCount++;
 
-        if (depMin < empShiftEndMin) {
-          earlyExitCount++;
+          if (empShiftStartMin <= empShiftEndMin ? depMin < empShiftEndMin : (depMin < empShiftEndMin && depMin >= 0)) {
+            earlyExitCount++;
+            isEarly = true;
+          }
         }
+      } else if (dayData.firstGiris) {
+        isMissingExit = true;
+      }
+
+      // Günlük Detay Çizelgesi Satırı Oluştur
+      if (dayData.firstGiris || dayData.lastCikis || breakPairs.length > 0) {
+        const entryStr = dayData.firstGiris 
+          ? new Date(dayData.firstGiris * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+          : '--:--';
+        
+        let exitStr = '--:--';
+        if (dayData.lastCikis) {
+          const tStr = new Date(dayData.lastCikis * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+          exitStr = (dayData.lastCikisType === 'OTO_CIKIS') ? `${tStr} (Oto)` : tStr;
+        }
+
+        let netWorkStr = '-';
+        if (dayData.firstGiris && dayData.lastCikis && dayData.lastCikis > dayData.firstGiris) {
+          const grossMin = Math.round((dayData.lastCikis - dayData.firstGiris) / 60);
+          const netMin = Math.max(0, grossMin - dayTotalBreakMin);
+          const h = Math.floor(netMin / 60);
+          const m = netMin % 60;
+          netWorkStr = `${h}s ${m}dk`;
+        } else if (dayData.firstGiris && isMissingExit) {
+          netWorkStr = '<span class="text-amber-600 font-bold">Açık Vardiya</span>';
+        }
+
+        let statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Zamanında</span>';
+        if (isMissingExit) {
+          statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Çıkış Basılmadı</span>';
+        } else if (isLate && isEarly) {
+          statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Geç + Erken Çıkış</span>';
+        } else if (isLate) {
+          statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Geç Geldi</span>';
+        } else if (isEarly) {
+          statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Erken Çıktı</span>';
+        }
+
+        dailyBreakRows.push({
+          dateStr: formatDateOnly(dateKey),
+          rawDate: dateKey,
+          name: emp.name,
+          uid: emp.uid,
+          entryStr,
+          exitStr,
+          breaks: breakPairs,
+          totalBreakMin: dayTotalBreakMin,
+          netWorkStr,
+          statusBadge
+        });
       }
     });
 
@@ -1724,45 +2049,94 @@ function generateReport() {
   document.getElementById('report-summary-early').textContent = totalEarlyAll;
   document.getElementById('report-summary-breaks').textContent = totalBreaksAll;
 
-  // Tabloyu doldur
+  // 1. Genel Özet Tablosunu doldur
   const tableBody = document.getElementById('reports-table-body');
   const emptyState = document.getElementById('reports-empty-state');
 
   if (reportRows.length === 0) {
     tableBody.innerHTML = '';
     emptyState.classList.remove('hidden');
-    return;
+  } else {
+    emptyState.classList.add('hidden');
+    reportRows.sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
+
+    tableBody.innerHTML = reportRows.map(row => {
+      return `
+        <tr class="hover:bg-slate-50 transition">
+          <td class="py-3.5 px-4 font-semibold text-slate-900">
+            <div>${escapeHtml(row.name)}</div>
+            <span class="text-[11px] font-mono text-slate-400">${escapeHtml(row.uid)}</span>
+          </td>
+          <td class="py-3.5 px-4 text-center font-bold text-blue-700">${row.workDays} Gün</td>
+          <td class="py-3.5 px-4 text-center">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${row.late > 0 ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'text-slate-400'}">
+              ${row.late} Kez
+            </span>
+          </td>
+          <td class="py-3.5 px-4 text-center">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${row.earlyExit > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'text-slate-400'}">
+              ${row.earlyExit} Kez
+            </span>
+          </td>
+          <td class="py-3.5 px-4 text-center font-medium text-slate-700">${row.breaks} Mola</td>
+          <td class="py-3.5 px-4 text-center font-mono text-xs font-semibold text-slate-800">${row.avgArrival}</td>
+          <td class="py-3.5 px-4 text-center font-mono text-xs font-semibold text-slate-800">${row.avgDeparture}</td>
+        </tr>
+      `;
+    }).join('');
   }
 
-  emptyState.classList.add('hidden');
+  // 2. Günlük Detaylı Mola ve Mesai Tablosunu doldur
+  const dailyTableBody = document.getElementById('daily-breaks-table-body');
+  const dailyEmptyState = document.getElementById('daily-breaks-empty-state');
 
-  // İsme göre sırala
-  reportRows.sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
+  if (dailyTableBody) {
+    if (dailyBreakRows.length === 0) {
+      dailyTableBody.innerHTML = '';
+      if (dailyEmptyState) dailyEmptyState.classList.remove('hidden');
+    } else {
+      if (dailyEmptyState) dailyEmptyState.classList.add('hidden');
+      dailyBreakRows.sort((a, b) => b.rawDate.localeCompare(a.rawDate) || a.name.localeCompare(b.name, 'tr-TR'));
 
-  tableBody.innerHTML = reportRows.map(row => {
-    return `
-      <tr class="hover:bg-slate-50 transition">
-        <td class="py-3.5 px-4 font-semibold text-slate-900">
-          <div>${escapeHtml(row.name)}</div>
-          <span class="text-[11px] font-mono text-slate-400">${escapeHtml(row.uid)}</span>
-        </td>
-        <td class="py-3.5 px-4 text-center font-bold text-blue-700">${row.workDays} Gün</td>
-        <td class="py-3.5 px-4 text-center">
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${row.late > 0 ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'text-slate-400'}">
-            ${row.late} Kez
-          </span>
-        </td>
-        <td class="py-3.5 px-4 text-center">
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${row.earlyExit > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'text-slate-400'}">
-            ${row.earlyExit} Kez
-          </span>
-        </td>
-        <td class="py-3.5 px-4 text-center font-medium text-slate-700">${row.breaks} Mola</td>
-        <td class="py-3.5 px-4 text-center font-mono text-xs font-semibold text-slate-800">${row.avgArrival}</td>
-        <td class="py-3.5 px-4 text-center font-mono text-xs font-semibold text-slate-800">${row.avgDeparture}</td>
-      </tr>
-    `;
-  }).join('');
+      dailyTableBody.innerHTML = dailyBreakRows.map(row => {
+        let breaksHtml = '<span class="text-xs text-slate-400 italic">Mola kullanılmadı</span>';
+        if (row.breaks && row.breaks.length > 0) {
+          breaksHtml = row.breaks.map((b, bIdx) => `
+            <span class="inline-flex items-center px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 text-xs font-medium mr-1.5 mb-1 border border-amber-200 shadow-sm" title="${bIdx + 1}. Mola">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5"></span>
+              ${b.start} - ${b.end} <span class="font-bold ml-1 text-amber-900">(${b.durationMin} dk)</span>
+            </span>
+          `).join('');
+        }
+
+        return `
+          <tr class="hover:bg-slate-50 transition border-b border-slate-100">
+            <td class="py-3 px-4 font-mono text-xs font-bold text-slate-700 whitespace-nowrap">${row.dateStr}</td>
+            <td class="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
+              <div>${escapeHtml(row.name)}</div>
+              <span class="text-[11px] font-mono text-slate-400">${escapeHtml(row.uid)}</span>
+            </td>
+            <td class="py-3 px-4 text-center font-mono text-xs font-bold text-slate-800">${row.entryStr}</td>
+            <td class="py-3 px-4 text-center font-mono text-xs font-bold text-slate-800">${row.exitStr}</td>
+            <td class="py-3 px-4 max-w-xs sm:max-w-md">
+              <div class="flex flex-wrap items-center">
+                ${breaksHtml}
+              </div>
+            </td>
+            <td class="py-3 px-4 text-center font-mono text-xs font-bold ${row.totalBreakMin > 0 ? 'text-amber-700' : 'text-slate-400'}">
+              ${row.totalBreakMin > 0 ? row.totalBreakMin + ' dk' : '-'}
+            </td>
+            <td class="py-3 px-4 text-center font-mono text-xs font-extrabold text-blue-700">
+              ${row.netWorkStr}
+            </td>
+            <td class="py-3 px-4 text-center">
+              ${row.statusBadge}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
 }
 
 function minutesToTimeString(minutes) {
@@ -1872,6 +2246,25 @@ if (settingsDeviceForm) {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupAuthListener();
+
+  // Dashboard Kart Tiklama Olaylari
+  const cardLate = document.getElementById('card-stat-late');
+  if (cardLate) {
+    cardLate.addEventListener('click', () => openModal('modal-late-arrivals'));
+  }
+
+  const btnViewLate = document.getElementById('btn-view-late-modal');
+  if (btnViewLate) {
+    btnViewLate.addEventListener('click', () => openModal('modal-late-arrivals'));
+  }
+
+  const cardPresent = document.getElementById('card-stat-present');
+  if (cardPresent) {
+    cardPresent.addEventListener('click', () => {
+      const el = document.getElementById('present-employees-list');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
 });
 
 
@@ -1892,8 +2285,8 @@ if (settingsFirmwareForm) {
       showToast('Hedef sürüm numarası 100\'den büyük olmalıdır (örn: 101).', 'warning');
       return;
     }
-    if (!binUrl.startsWith('http://') && !binUrl.startsWith('https://')) {
-      showToast('Geçerli bir HTTP veya HTTPS dosya linki giriniz.', 'warning');
+    if (!binUrl.startsWith('https://')) {
+      showToast('Güvenlik Uyarısı: Firmware indirme bağlantısı mutlaka HTTPS olmalıdır.', 'warning');
       return;
     }
 

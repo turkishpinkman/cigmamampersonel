@@ -87,7 +87,7 @@ int employeeFind(const char* uid) {
   if (uid == nullptr || strlen(uid) == 0) return -1;
 
   for (int i = 0; i < MAX_EMPLOYEES; i++) {
-    if (_employees[i].active && strcmp(_employees[i].uid, uid) == 0) {
+    if (_employees[i].active && uidMatch(_employees[i].uid, uid)) {
       return i;
     }
   }

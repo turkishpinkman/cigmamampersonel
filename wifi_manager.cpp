@@ -54,7 +54,7 @@ static void _startConnection() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);     // Otomatik yeniden baglanma ACIK
-  WiFi.persistent(true);           // Kimlik bilgilerini flash'a kaydet
+  WiFi.persistent(false);          // NVS flash omrunu korumak icin false
 
   // ESP32 WiFi guc yonetimi kapat - daha kararli baglanti
   esp_wifi_set_ps(WIFI_PS_NONE);

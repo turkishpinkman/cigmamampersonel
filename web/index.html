@@ -380,11 +380,14 @@
             </div>
 
             <!-- Kart 2: Şu An İçeride Olanlar -->
-            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+            <div id="card-stat-present" class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between cursor-pointer transition-all hover:border-emerald-300 hover:shadow-md" title="İçerideki personelleri görmek için tıklayın">
               <div>
                 <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Şu An İçeride</p>
                 <p id="stat-present-now" class="text-3xl font-extrabold text-emerald-600 mt-1">0</p>
-                <p class="text-[11px] text-slate-500 mt-1">Fabrikada çalışan personel</p>
+                <div class="flex items-center space-x-1 text-[11px] text-slate-500 mt-1">
+                  <span>Fabrikada çalışan personel</span>
+                  <span class="text-emerald-600 font-semibold ml-0.5">İncele →</span>
+                </div>
               </div>
               <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,12 +410,18 @@
               </div>
             </div>
 
-            <!-- Kart 4: Bugün Geç Kalanlar -->
-            <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between">
+            <!-- Kart 4: Bugün Geç Kalanlar (Tıklanabilir ve İnteraktif) -->
+            <div id="card-stat-late" class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm card-hover flex items-center justify-between cursor-pointer transition-all hover:border-rose-300 hover:shadow-md" title="Geç kalan personellerin detaylarını görmek için tıklayın">
               <div>
-                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Geç Kalanlar</p>
+                <div class="flex items-center space-x-1.5">
+                  <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Geç Kalanlar</p>
+                  <span id="late-status-pulse" class="w-2 h-2 rounded-full bg-rose-500 hidden animate-pulse"></span>
+                </div>
                 <p id="stat-late-arrivals" class="text-3xl font-extrabold text-rose-600 mt-1">0</p>
-                <p class="text-[11px] text-slate-500 mt-1">Bugün mesaiye geç başlayan</p>
+                <div class="flex items-center space-x-1 text-[11px] text-slate-500 mt-1">
+                  <span>Bugün mesaiye geç başlayan</span>
+                  <span class="text-rose-600 font-bold underline hover:text-rose-700 ml-1">Listele →</span>
+                </div>
               </div>
               <div class="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -421,6 +430,40 @@
               </div>
             </div>
 
+          </div>
+
+          <!-- Bugün Geç Kalanlar Hızlı Bilgi Paneli -->
+          <div id="late-arrivals-alert-container" class="hidden">
+            <div class="bg-gradient-to-r from-rose-50 via-amber-50/40 to-rose-50 border border-rose-200/90 rounded-2xl p-4 sm:p-5 shadow-sm">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-start sm:items-center space-x-3">
+                  <div class="w-10 h-10 rounded-xl bg-rose-500 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 class="text-sm font-bold text-rose-900 flex items-center space-x-2">
+                      <span>Bugün Mesaiye Geç Başlayan Personeller</span>
+                      <span id="late-alert-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300">0 Kişi</span>
+                    </h4>
+                    <p id="late-alert-subtitle" class="text-xs text-rose-700/90 mt-0.5">
+                      Vardiya başlangıç saatinden sonra ilk girişini yapan personeller tespit edildi.
+                    </p>
+                  </div>
+                </div>
+                <div class="flex items-center space-x-2 flex-shrink-0 self-end sm:self-auto">
+                  <button type="button" id="btn-view-late-modal" class="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center space-x-1.5 cursor-pointer">
+                    <span>Tüm Detayları İncele</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                  </button>
+                </div>
+              </div>
+              <!-- Hızlı Önizleme Rozetleri -->
+              <div id="late-arrivals-pills" class="mt-3 pt-3 border-t border-rose-200/60 flex flex-wrap gap-2">
+                <!-- JS tarafından doldurulur -->
+              </div>
+            </div>
           </div>
 
           <!-- Alt Grid: İçeridekiler & Canlı Hareket Akışı -->
@@ -863,6 +906,46 @@
               </div>
               <p class="text-sm font-bold text-slate-700">Seçili tarih aralığında mesai verisi bulunamadı.</p>
               <p class="text-xs text-slate-400 mt-1">Lütfen geçerli bir tarih aralığı belirleyip tekrar deneyiniz.</p>
+            </div>
+          </div>
+
+          <!-- Detaylı Günlük Mola ve Mesai Çizelgesi (Daily Break & Shift Breakdown) -->
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Günlük Detaylı Mola ve Mesai Dökümü</h3>
+                <p class="text-xs text-slate-500 mt-0.5">Tüm personellerin gün gün giriş, çıkış ve her bir molasının saat/dakika dökümü</p>
+              </div>
+              <div class="flex items-center space-x-2">
+                <span class="inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+                  Bordro & Hakkaniyetli Mola Takibi
+                </span>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="text-xs uppercase bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <tr>
+                    <th scope="col" class="py-3 px-4">Tarih</th>
+                    <th scope="col" class="py-3 px-4">Personel</th>
+                    <th scope="col" class="py-3 px-4 text-center">İlk Giriş</th>
+                    <th scope="col" class="py-3 px-4 text-center">Son Çıkış</th>
+                    <th scope="col" class="py-3 px-4">Kullanılan Molalar (Saat & Süre)</th>
+                    <th scope="col" class="py-3 px-4 text-center">Toplam Mola</th>
+                    <th scope="col" class="py-3 px-4 text-center">Net Çalışma</th>
+                    <th scope="col" class="py-3 px-4 text-center">Durum</th>
+                  </tr>
+                </thead>
+                <tbody id="daily-breaks-table-body" class="divide-y divide-slate-100 font-normal">
+                  <!-- app.js generateReport() tarafından doldurulur -->
+                </tbody>
+              </table>
+            </div>
+
+            <div id="daily-breaks-empty-state" class="hidden py-12 px-4 text-center">
+              <p class="text-sm font-semibold text-slate-500">Mola veya mesai kaydı bulunamadı.</p>
             </div>
           </div>
         </section>
@@ -1358,6 +1441,48 @@
             <span>Evet, Personeli Sil</span>
           </button>
         </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Modal 4: Bugün Geç Kalan Personeller Listesi -->
+  <div id="modal-late-arrivals" class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 hidden no-print">
+    <div class="modal-box bg-white rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-100">
+      
+      <!-- Modal Başlık -->
+      <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-rose-50/60 to-white">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900 text-lg">Bugün Mesaiye Geç Başlayanlar</h3>
+            <p class="text-xs text-slate-500">Vardiya saatinden sonra kart okutan personellerin listesi</p>
+          </div>
+        </div>
+        <button type="button" class="close-modal-btn p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer" title="Kapat">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      
+      <!-- Liste Gövdesi -->
+      <div class="p-6 max-h-[60vh] overflow-y-auto">
+        <div id="late-modal-table-container">
+          <!-- JS tarafından doldurulur -->
+        </div>
+      </div>
+
+      <!-- Alt Bar -->
+      <div class="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+        <span class="text-xs text-slate-400">Veriler anlık hareket akışına göre hesaplanır.</span>
+        <button type="button" class="close-modal-btn px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer">
+          Kapat
+        </button>
       </div>
 
     </div>

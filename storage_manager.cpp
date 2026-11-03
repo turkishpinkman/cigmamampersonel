@@ -5,10 +5,13 @@
 bool storageInit() {
   Serial.println("[Storage] LittleFS baslatiliyor...");
 
-  // true: Baslatma basarisiz olursa bicimlendir (format on fail)
-  if (!LittleFS.begin(true)) {
-    Serial.println("[Storage] HATA: LittleFS baslatilamadi!");
-    return false;
+  // false: Baslatma basarisiz olursa verileri korumak icin otomatik bicimlendirme yapma!
+  if (!LittleFS.begin(false)) {
+    Serial.println("[Storage] UYARI: LittleFS normal baslatilamadi, baglanmayi tekrar deniyor...");
+    if (!LittleFS.begin(false)) {
+      Serial.println("[Storage] HATA: LittleFS acilamadi! Veri kaybini onlemek icin otomatik bicimlendirme (format) calistirilmiyor.");
+      return false;
+    }
   }
 
   Serial.println("[Storage] LittleFS basariyla baslatildi.");
@@ -79,20 +82,23 @@ bool storageWrite(const char* path, const String& data) {
     return false;
   }
 
-  // Eski dosya varsa kaldir
-  if (LittleFS.exists(path)) {
-    if (!LittleFS.remove(path)) {
-      Serial.print("[Storage] UYARI: Eski dosya silinemedi: ");
-      Serial.println(path);
-    }
-  }
-
-  // Gecici dosyayi asil dosya ismiyle yeniden adlandir
+  // ATOMIK YAZMA:
+  // LittleFS lfs_rename hedef dosya varsa atomik olarak uzerine yazar.
+  // Eski dosyayi onceden silmeyiz; boylece guc kesintisinde veri kaybolmaz.
   if (!LittleFS.rename(tmpPath.c_str(), path)) {
-    Serial.print("[Storage] HATA: Dosya yeniden adlandirilamadi: ");
-    Serial.println(path);
-    LittleFS.remove(tmpPath.c_str());
-    return false;
+    // Eger cekirdek surumunde hedef dosya varken rename basarisiz olursa yedekleyerek tasi:
+    String bakPath = String(path) + ".bak";
+    LittleFS.remove(bakPath.c_str());
+    LittleFS.rename(path, bakPath.c_str());
+    if (!LittleFS.rename(tmpPath.c_str(), path)) {
+      Serial.print("[Storage] HATA: Dosya yeniden adlandirilamadi: ");
+      Serial.println(path);
+      // Geri yukle
+      LittleFS.rename(bakPath.c_str(), path);
+      LittleFS.remove(tmpPath.c_str());
+      return false;
+    }
+    LittleFS.remove(bakPath.c_str());
   }
 
   Serial.print("[Storage] Dosya basariyla yazildi: ");

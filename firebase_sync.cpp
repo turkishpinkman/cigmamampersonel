@@ -6,6 +6,7 @@
 #include "event_logger.h"
 #include "system_controller.h"
 #include "ota_manager.h"
+#include <esp_task_wdt.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -145,7 +146,7 @@ static bool _refreshAuthToken() {
 // ==========================================
 static bool _ensureAuth() {
   if (!wifiIsConnected()) return false;
-  if (_authenticated && millis() < _tokenExpiry) return true;
+  if (_authenticated && (long)(_tokenExpiry - millis()) > 0) return true;
   if (_refreshToken.length() > 0) return _refreshAuthToken();
   return _authenticate();
 }
@@ -154,12 +155,16 @@ static bool _ensureAuth() {
 // Firestore REST API yardimci fonksiyonlari
 // ==========================================
 
-// Firestore'a dokuman olustur (POST)
-static bool _firestoreCreate(const char* collection, const String& fieldsJson) {
+// Firestore'a dokuman olustur (POST) - Mukerrer kayitlari onlemek icin documentId destekli
+static bool _firestoreCreate(const char* collection, const String& fieldsJson, const char* docId = nullptr) {
   if (!_ensureAuth()) return false;
 
   HTTPClient http;
   String url = _firestoreBase + collection;
+  if (docId && strlen(docId) > 0) {
+    url += "?documentId=";
+    url += docId;
+  }
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + _idToken);
@@ -169,7 +174,9 @@ static bool _firestoreCreate(const char* collection, const String& fieldsJson) {
   int httpCode = http.POST(body);
   http.end();
 
-  if (httpCode == 200) return true;
+  // 200/201: Basariyla olusturuldu
+  // 409 (ALREADY_EXISTS): Sunucuya daha once ulasmis (ag kopmasi sonrasi tekrar gonderimde mukerrer onleme)
+  if (httpCode == 200 || httpCode == 409) return true;
   Serial.printf("[SYNC] Firestore POST hatasi: %d (%s)\n", httpCode, collection);
   if (httpCode == 401) _authenticated = false;  // Token gecersiz
   return false;
@@ -223,12 +230,16 @@ static String _firestoreGet(const char* docPath) {
   return result;
 }
 
-// Firestore dokuman guncelle (PATCH)
-static bool _firestorePatch(const char* docPath, const String& fieldsJson) {
+// Firestore dokuman guncelle (PATCH) - updateMask destekli kismi guncelleme
+static bool _firestorePatch(const char* docPath, const String& fieldsJson, const char* updateMask = nullptr) {
   if (!_ensureAuth()) return false;
 
   HTTPClient http;
   String url = _firestoreBase + docPath;
+  if (updateMask && strlen(updateMask) > 0) {
+    url += "?";
+    url += updateMask;
+  }
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + _idToken);
@@ -244,11 +255,22 @@ static bool _firestorePatch(const char* docPath, const String& fieldsJson) {
   return false;
 }
 
+static uint8_t _parseClamped(const char* str, uint8_t minVal, uint8_t maxVal, uint8_t defaultVal) {
+  if (!str || strlen(str) == 0) return defaultVal;
+  int v = atoi(str);
+  if (v < (int)minVal) return minVal;
+  if (v > (int)maxVal) return maxVal;
+  return (uint8_t)v;
+}
+
 // ==========================================
 // Firestore fields JSON olusturma yardimcilari
 // ==========================================
 static String _strField(const char* val) {
-  return String("{\"stringValue\":\"") + val + "\"}";
+  if (!val) return "{\"stringValue\":\"\"}";
+  char esc[96];
+  jsonEscape(val, esc, sizeof(esc));
+  return String("{\"stringValue\":\"") + esc + "\"}";
 }
 
 static String _intField(unsigned long val) {
@@ -260,7 +282,7 @@ static String _boolField(bool val) {
 }
 
 // ==========================================
-// syncUploadPendingEvents - Olaylari yukle
+// syncUploadPendingEvents - Olaylari yukle (WDT ve Batch korumali)
 // ==========================================
 void syncUploadPendingEvents() {
   if (!wifiIsConnected()) return;
@@ -271,10 +293,14 @@ void syncUploadPendingEvents() {
 
   int uploaded = 0;
   int failed = 0;
+  bool anyUploaded = false;
 
   for (int i = 0; i < count; i++) {
     if (events[i].synced) continue;
     if (events[i].uid[0] == '\0') continue;
+
+    // Watchdog sayacini her olay gonderiminde besle
+    esp_task_wdt_reset();
 
     // Olay icin Firestore fields JSON olustur
     String fields = "{";
@@ -287,22 +313,37 @@ void syncUploadPendingEvents() {
     fields += "\"localId\":" + _intField(events[i].id);
     fields += "}";
 
-    if (_firestoreCreate("events", fields)) {
-      eventMarkSynced(events[i].id);
+    // Deterministik dokuman ID: Ag kopmasi durumunda mukerrer kayit olusmasini onler
+    char docId[48];
+    snprintf(docId, sizeof(docId), "EVT_%s_%lu", FIREBASE_DEVICE_ID, events[i].id);
+
+    if (_firestoreCreate("events", fields, docId)) {
+      // Diske her seferinde yazma yapma, RAM'de isaretle
+      eventMarkSyncedNoSave(events[i].id);
       uploaded++;
+      anyUploaded = true;
     } else {
       failed++;
-      if (failed >= 3) {
-        Serial.println("[SYNC] 3 ardisik hata, yukleme durduruldu");
+      if (failed >= 2) {
+        Serial.println("[SYNC] Firestore hatasi, yukleme sonraki tura birakildi");
         break;
       }
     }
 
-    delay(100);  // Firebase rate limit koruması
+    yield();
+
+    // SYNC_BATCH_SIZE (5) siniri: Ana loop'un ve dokunmatigin donmasini onler
+    if (uploaded >= SYNC_BATCH_SIZE) {
+      break;
+    }
+
+    delay(50);
   }
 
-  if (uploaded > 0) {
-    Serial.printf("[SYNC] %d olay Firestore'a yuklendi\n", uploaded);
+  // Batch tamamlandiginda LittleFS'e TEK BIR SEFERDE kaydet (Flash omrunu korur)
+  if (anyUploaded) {
+    eventSave();
+    Serial.printf("[SYNC] %d olay Firestore'a basariyla yuklendi ve kaydedildi\n", uploaded);
   }
 }
 
@@ -345,19 +386,19 @@ void syncDownloadEmployees() {
     if (hasCustomShift) {
       if (fields.containsKey("shiftStartHour")) {
         const char* val = fields["shiftStartHour"]["integerValue"] | "";
-        if (strlen(val) > 0) customShift.startHour = atoi(val);
+        customShift.startHour = _parseClamped(val, 0, 23, 8);
       }
       if (fields.containsKey("shiftStartMinute")) {
         const char* val = fields["shiftStartMinute"]["integerValue"] | "";
-        if (strlen(val) > 0) customShift.startMinute = atoi(val);
+        customShift.startMinute = _parseClamped(val, 0, 59, 0);
       }
       if (fields.containsKey("shiftEndHour")) {
         const char* val = fields["shiftEndHour"]["integerValue"] | "";
-        if (strlen(val) > 0) customShift.endHour = atoi(val);
+        customShift.endHour = _parseClamped(val, 0, 23, 17);
       }
       if (fields.containsKey("shiftEndMinute")) {
         const char* val = fields["shiftEndMinute"]["integerValue"] | "";
-        if (strlen(val) > 0) customShift.endMinute = atoi(val);
+        customShift.endMinute = _parseClamped(val, 0, 59, 0);
       }
     }
 
@@ -365,6 +406,11 @@ void syncDownloadEmployees() {
 
     int idx = employeeFind(uid);
     if (idx == -1 && active) {
+      // Kapasite siniri kontrolu (MAX_EMPLOYEES)
+      if (employeeCount() >= MAX_EMPLOYEES) {
+        Serial.printf("[SYNC] UYARI: Cihaz maksimum personel kapasitesine (%d) ulasti! %s eklenemedi.\n", MAX_EMPLOYEES, name);
+        continue;
+      }
       // Yeni personel - yerel listeye ekle
       if (employeeAdd(uid, name)) {
         int newIdx = employeeFind(uid);
@@ -392,6 +438,7 @@ void syncDownloadEmployees() {
         bool changed = false;
         if (strcmp(emp->name, name) != 0) {
           strncpy(emp->name, name, sizeof(emp->name) - 1);
+          emp->name[sizeof(emp->name) - 1] = '\0';
           changed = true;
         }
         if (emp->hasCustomShift != hasCustomShift) {
@@ -448,31 +495,23 @@ void syncDownloadSettings() {
   // Firestore integerValue string olarak gelir
   if (fields.containsKey("shiftStartHour")) {
     const char* val = fields["shiftStartHour"]["integerValue"] | "";
-    if (strlen(val) > 0) {
-      newShift.startHour = atoi(val);
-      shiftDownloaded = true;
-    }
+    newShift.startHour = _parseClamped(val, 0, 23, currentShift.startHour);
+    shiftDownloaded = true;
   }
   if (fields.containsKey("shiftStartMinute")) {
     const char* val = fields["shiftStartMinute"]["integerValue"] | "";
-    if (strlen(val) > 0) {
-      newShift.startMinute = atoi(val);
-      shiftDownloaded = true;
-    }
+    newShift.startMinute = _parseClamped(val, 0, 59, currentShift.startMinute);
+    shiftDownloaded = true;
   }
   if (fields.containsKey("shiftEndHour")) {
     const char* val = fields["shiftEndHour"]["integerValue"] | "";
-    if (strlen(val) > 0) {
-      newShift.endHour = atoi(val);
-      shiftDownloaded = true;
-    }
+    newShift.endHour = _parseClamped(val, 0, 23, currentShift.endHour);
+    shiftDownloaded = true;
   }
   if (fields.containsKey("shiftEndMinute")) {
     const char* val = fields["shiftEndMinute"]["integerValue"] | "";
-    if (strlen(val) > 0) {
-      newShift.endMinute = atoi(val);
-      shiftDownloaded = true;
-    }
+    newShift.endMinute = _parseClamped(val, 0, 59, currentShift.endMinute);
+    shiftDownloaded = true;
   }
 
   if (shiftDownloaded && (newShift.startHour != currentShift.startHour ||
@@ -487,6 +526,14 @@ void syncDownloadSettings() {
     Serial.printf("[SYNC] Ayarlar indirildi - Mesai ayni: %02d:%02d-%02d:%02d\n",
                   newShift.startHour, newShift.startMinute,
                   newShift.endHour, newShift.endMinute);
+  }
+
+  // Admin kart UID guncelleme
+  if (fields.containsKey("adminUID")) {
+    const char* aUid = fields["adminUID"]["stringValue"] | "";
+    if (strlen(aUid) > 0) {
+      systemSetAdminUID(aUid);
+    }
   }
 
   // BULUTTAN FIRMWARE GUNCELLEME KONTROLU (Cloud OTA)
@@ -513,17 +560,59 @@ void syncDownloadSettings() {
                     targetVer, installedVersion);
       Serial.printf("[Cloud OTA] Indirme adresi: %s\n", binUrl);
 
-      // Once bu surum numarasini cihaza isle (tekrar donguye girmesin)
-      storageWrite("/ota_version.txt", String(targetVer));
-
-      // Indirme ve flashlama islemini baslat
-      bool success = otaPerformCloudUpdate(binUrl);
-      if (!success) {
-        // Eger indirme basarisiz olursa flash'taki kaydi eski haline cevir
-        storageWrite("/ota_version.txt", String(installedVersion));
-      }
+      // Indirme ve flashlama islemini baslat (surum numarasini flash'a isleyip yeniden baslatir)
+      otaPerformCloudUpdate(binUrl, targetVer);
     }
   }
+}
+
+// ==========================================
+// syncDeleteEmployee - Personeli Firestore'da pasife al
+// ==========================================
+void syncDeleteEmployee(const char* uid) {
+  if (!wifiIsConnected() || !_ensureAuth() || !uid) return;
+
+  String docPath = "employees/";
+  char cleanUid[32];
+  normalizeUID(uid, cleanUid, sizeof(cleanUid));
+  docPath += cleanUid;
+
+  String fields = "{";
+  fields += "\"active\":{\"booleanValue\":false},";
+  fields += "\"state\":{\"integerValue\":\"0\"},";
+  fields += "\"lastUpdate\":" + _intField(timeNow());
+  fields += "}";
+
+  if (_firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=active&updateMask.fieldPaths=state&updateMask.fieldPaths=lastUpdate")) {
+    Serial.printf("[SYNC] Personel Firestore'da pasife alindi: %s\n", uid);
+  } else {
+    Serial.printf("[SYNC] Personel silme Firestore'a iletilemedi: %s\n", uid);
+  }
+}
+
+// ==========================================
+// syncUploadShiftSettings - Cihazdan mesai saatlerini Firestore'a yukle
+// ==========================================
+bool syncUploadShiftSettings(const ShiftConfig& shift) {
+  if (!wifiIsConnected() || !_ensureAuth()) return false;
+
+  String docPath = "settings/main";
+  String fields = "{";
+  fields += "\"shiftStartHour\":" + _intField(shift.startHour) + ",";
+  fields += "\"shiftStartMinute\":" + _intField(shift.startMinute) + ",";
+  fields += "\"shiftEndHour\":" + _intField(shift.endHour) + ",";
+  fields += "\"shiftEndMinute\":" + _intField(shift.endMinute) + ",";
+  fields += "\"updatedAt\":" + _intField(timeNow());
+  fields += "}";
+
+  bool ok = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute&updateMask.fieldPaths=updatedAt");
+  if (ok) {
+    Serial.printf("[SYNC] Cihazdan yeni mesai saatleri Firestore'a aktarildi: %02d:%02d - %02d:%02d\n",
+                  shift.startHour, shift.startMinute, shift.endHour, shift.endMinute);
+  } else {
+    Serial.println(F("[SYNC] HATA: Mesai saatleri Firestore'a guncellenemedi!"));
+  }
+  return ok;
 }
 
 // ==========================================
@@ -607,7 +696,7 @@ void syncUploadEmployeeState(const char* uid, EmployeeState state) {
   fields += "\"lastUpdate\":" + _intField(timeNow());
   fields += "}";
 
-  _firestorePatch(docPath.c_str(), fields);
+  _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=uid&updateMask.fieldPaths=state&updateMask.fieldPaths=lastUpdate");
 }
 
 // ==========================================

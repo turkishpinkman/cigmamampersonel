@@ -1,5 +1,6 @@
 #include "ota_manager.h"
 #include "wifi_manager.h"
+#include "storage_manager.h"
 #include <ArduinoOTA.h>
 #include <WebServer.h>
 #include <Update.h>
@@ -34,10 +35,26 @@ static const char* serverIndex =
 "<input type='submit' value='Firmware Güncelle'>"
 "</form></div>";
 
+static bool isAllowedOTAHost(const char* url) {
+  if (!url || strncmp(url, "https://", 8) != 0) return false;
+  const char* hostStart = url + 8;
+  const char* pathStart = strchr(hostStart, '/');
+  String host = pathStart ? String(hostStart).substring(0, pathStart - hostStart) : String(hostStart);
+  host.toLowerCase();
+  
+  // Guvenli ve izin verilen alan adlari (Domain Whitelist)
+  if (host == "github.com" || host.endsWith(".github.com") ||
+      host == "githubusercontent.com" || host.endsWith(".githubusercontent.com") ||
+      host == "googleapis.com" || host.endsWith(".googleapis.com")) {
+    return true;
+  }
+  return false;
+}
+
 void otaInit() {
   // 1. Arduino IDE / PlatformIO Native OTA Yapilandirmasi
   ArduinoOTA.setHostname("cigmamam-terminal");
-  ArduinoOTA.setPassword("cigmamam2026"); // Guvenlik sifresi
+  ArduinoOTA.setPassword(OTA_ADMIN_PASS); // Guvenlik sifresi (config.h / secrets.h)
 
   ArduinoOTA.onStart([]() {
     buzzerStop();
@@ -64,18 +81,27 @@ void otaInit() {
 
   ArduinoOTA.begin();
 
-  // 2. Web Tarayicisi Uzerinden Guncelleme (/update)
+  // 2. Web Tarayicisi Uzerinden Guncelleme (/update) - Basic Auth Korumali
   otaServer.on("/", HTTP_GET, []() {
+    if (!otaServer.authenticate(OTA_ADMIN_USER, OTA_ADMIN_PASS)) {
+      return otaServer.requestAuthentication();
+    }
     otaServer.sendHeader("Connection", "close");
     otaServer.send(200, "text/html", serverIndex);
   });
 
   otaServer.on("/update", HTTP_POST, []() {
+    if (!otaServer.authenticate(OTA_ADMIN_USER, OTA_ADMIN_PASS)) {
+      return otaServer.requestAuthentication();
+    }
     otaServer.sendHeader("Connection", "close");
     otaServer.send(200, "text/plain", (Update.hasError()) ? "GUNCELLEME BASARISIZ!" : "GUNCELLEME BASARILI! Cihaz yeniden basliyor...");
     delay(1000);
     ESP.restart();
   }, []() {
+    if (!otaServer.authenticate(OTA_ADMIN_USER, OTA_ADMIN_PASS)) {
+      return;
+    }
     HTTPUpload& upload = otaServer.upload();
     if (upload.status == UPLOAD_FILE_START) {
       Serial.printf("[Web OTA] Dosya yukleniyor: %s\n", upload.filename.c_str());
@@ -112,11 +138,18 @@ void otaTick() {
 // =============================================================================
 // Cloud OTA - Web Panelden Verilen URL ile Uzaktan Indirip Flashlama
 // =============================================================================
-bool otaPerformCloudUpdate(const char* binUrl) {
+bool otaPerformCloudUpdate(const char* binUrl, int targetVer) {
   buzzerStop();
   if (!binUrl || strlen(binUrl) < 10) return false;
   if (!wifiIsConnected()) {
     Serial.println("[Cloud OTA] Hata: WiFi baglantisi yok.");
+    return false;
+  }
+
+  // URL Guvenlik Denetimi: Sadece HTTPS ve izin verilen guvenilir hostlar
+  if (!isAllowedOTAHost(binUrl)) {
+    Serial.printf("[Cloud OTA] Guvenlik Engeli: Gecersiz veya izin verilmeyen URL: %s\n", binUrl);
+    uiDrawErrorScreen("Guvensiz OTA Adresi");
     return false;
   }
 
@@ -155,6 +188,11 @@ bool otaPerformCloudUpdate(const char* binUrl) {
     http.end();
 
     if (redirectUrl.length() > 0) {
+      if (!isAllowedOTAHost(redirectUrl.c_str())) {
+        Serial.printf("[Cloud OTA] Guvenlik Engeli: Yonlendirme adresi izinli listede degil: %s\n", redirectUrl.c_str());
+        uiDrawErrorScreen("Guvensiz Yonlendirme");
+        return false;
+      }
       if (!http.begin(secureClient, redirectUrl)) {
         Serial.println("[Cloud OTA] Yonlendirme adresine baglanilamadi!");
         uiDrawErrorScreen("Yonlendirme Hatasi");
@@ -194,6 +232,7 @@ bool otaPerformCloudUpdate(const char* binUrl) {
   size_t written = 0;
   uint8_t buff[2048]; // Tamponu 2KB yaparak aktarimi hizlandir
   int lastProgress = -1;
+  unsigned long lastDataTime = millis();
 
   while (http.connected() && (written < (size_t)contentLength)) {
     // Watchdog'u besle (Cihazin reset atmasini onler)
@@ -202,7 +241,18 @@ bool otaPerformCloudUpdate(const char* binUrl) {
     size_t availableBytes = stream->available();
     if (availableBytes) {
       int readBytes = stream->readBytes(buff, ((availableBytes > sizeof(buff)) ? sizeof(buff) : availableBytes));
+      // Guvenlik: Ilk parca ise ESP32 binary header magic byte (0xE9) dogrulamasi yap
+      if (written == 0 && readBytes > 0) {
+        if (buff[0] != 0xE9) {
+          Serial.printf("[Cloud OTA] Guvenlik Hatasi: Firmware ESP32 basligi gecersiz! (Magic: 0x%02X)\n", buff[0]);
+          Update.abort();
+          http.end();
+          uiDrawErrorScreen("Gecersiz Firmware");
+          return false;
+        }
+      }
       written += Update.write(buff, readBytes);
+      lastDataTime = millis();
 
       int progress = (written * 100) / contentLength;
       if (progress != lastProgress && progress % 10 == 0) {
@@ -214,6 +264,12 @@ bool otaPerformCloudUpdate(const char* binUrl) {
         char pMsg[32];
         snprintf(pMsg, sizeof(pMsg), "Yukleniyor: %%%d", progress);
         displayText(55, 95, pMsg, 0xFFFF, 2);
+      }
+    } else {
+      // 15 saniye hic veri gelmezse baglanti takilmis demektir, timeout ile cik
+      if (millis() - lastDataTime > 15000) {
+        Serial.println("[Cloud OTA] HATA: Veri akisi zaman asimina ugradi (15sn)!");
+        break;
       }
     }
     yield(); // ESP32 arka plan WiFi gorevlerine nefes aldir
@@ -241,6 +297,10 @@ bool otaPerformCloudUpdate(const char* binUrl) {
   }
 
   Serial.println("[Cloud OTA] TEBRIKLER! Firmware basariyla yuklendi.");
+  if (targetVer > 0) {
+    storageWrite("/ota_version.txt", String(targetVer));
+    Serial.printf("[Cloud OTA] Surum %d flash hafizaya kaydedildi.\n", targetVer);
+  }
   uiDrawInfoScreen("", "Yazilim Tamam! Yeniden Baslatiliyor...", 0x07E0);
   delay(1500);
   ESP.restart();

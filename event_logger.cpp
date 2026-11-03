@@ -2,6 +2,7 @@
 #include "config.h"
 #include "storage_manager.h"
 #include "time_manager.h"
+#include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <string.h>
 
@@ -14,56 +15,73 @@ void eventInit() {
   _eventCount = 0;
   _nextId = 1;
 
-  if (storageExists(PATH_EVENTS)) {
-    String json = storageRead(PATH_EVENTS);
-    if (json.length() > 0) {
-      size_t docSize = json.length() * 2 + 1024;
-      if (docSize < 4096) docSize = 4096;
-      DynamicJsonDocument doc(docSize);
-      DeserializationError err = deserializeJson(doc, json);
+  if (!LittleFS.exists(PATH_EVENTS)) {
+    Serial.println(F("[EVENT] events.json bulunamadi, sifirdan baslatildi."));
+    return;
+  }
+
+  File f = LittleFS.open(PATH_EVENTS, "r");
+  if (!f) {
+    Serial.println(F("[EVENT] events.json acilamadi!"));
+    return;
+  }
+
+  // Akis temelli satir satir okuma - Bellek (heap) patlamasini onler
+  _eventCount = 0;
+  StaticJsonDocument<256> itemDoc;
+
+  while (f.available() && _eventCount < MAX_PENDING_EVENTS) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    // nextId satiri
+    if (line.indexOf("\"nextId\"") >= 0) {
+      int idx = line.indexOf(':');
+      if (idx > 0) {
+        String numPart = line.substring(idx + 1);
+        numPart.replace(",", "");
+        numPart.trim();
+        _nextId = (unsigned long)numPart.toInt();
+      }
+      continue;
+    }
+
+    // Olay JSON nesnesi
+    if (line.startsWith("{") && line.indexOf("\"uid\"") >= 0) {
+      if (line.endsWith(",")) line.remove(line.length() - 1);
+      itemDoc.clear();
+      DeserializationError err = deserializeJson(itemDoc, line);
       if (!err) {
-        if (doc.containsKey("nextId")) {
-          _nextId = doc["nextId"] | 1UL;
+        _events[_eventCount].id = itemDoc["id"] | 0UL;
+        const char* uid = itemDoc["uid"] | "";
+        strncpy(_events[_eventCount].uid, uid, sizeof(_events[_eventCount].uid) - 1);
+        _events[_eventCount].uid[sizeof(_events[_eventCount].uid) - 1] = '\0';
+
+        const char* name = itemDoc["name"] | "";
+        strncpy(_events[_eventCount].name, name, sizeof(_events[_eventCount].name) - 1);
+        _events[_eventCount].name[sizeof(_events[_eventCount].name) - 1] = '\0';
+
+        _events[_eventCount].type = (EventType)(itemDoc["type"] | 0);
+        _events[_eventCount].timestamp = itemDoc["ts"] | 0UL;
+
+        const char* date = itemDoc["date"] | "";
+        strncpy(_events[_eventCount].date, date, sizeof(_events[_eventCount].date) - 1);
+        _events[_eventCount].date[sizeof(_events[_eventCount].date) - 1] = '\0';
+
+        _events[_eventCount].synced = itemDoc["synced"] | false;
+
+        if (_events[_eventCount].id >= _nextId) {
+          _nextId = _events[_eventCount].id + 1;
         }
-
-        JsonArray arr = doc["events"].as<JsonArray>();
-        _eventCount = 0;
-        for (JsonObject obj : arr) {
-          if (_eventCount >= MAX_PENDING_EVENTS) break;
-
-          _events[_eventCount].id = obj["id"] | 0UL;
-
-          const char* uid = obj["uid"] | "";
-          strncpy(_events[_eventCount].uid, uid, sizeof(_events[_eventCount].uid) - 1);
-          _events[_eventCount].uid[sizeof(_events[_eventCount].uid) - 1] = '\0';
-
-          const char* name = obj["name"] | "";
-          strncpy(_events[_eventCount].name, name, sizeof(_events[_eventCount].name) - 1);
-          _events[_eventCount].name[sizeof(_events[_eventCount].name) - 1] = '\0';
-
-          _events[_eventCount].type = (EventType)(obj["type"] | 0);
-          _events[_eventCount].timestamp = obj["ts"] | 0UL;
-
-          const char* date = obj["date"] | "";
-          strncpy(_events[_eventCount].date, date, sizeof(_events[_eventCount].date) - 1);
-          _events[_eventCount].date[sizeof(_events[_eventCount].date) - 1] = '\0';
-
-          _events[_eventCount].synced = obj["synced"] | false;
-
-          if (_events[_eventCount].id >= _nextId) {
-            _nextId = _events[_eventCount].id + 1;
-          }
-          _eventCount++;
-        }
-
-        if (_nextId == 0) _nextId = 1;
-
-        Serial.printf("[EVENT] %d olay yuklendi. Sonraki ID: %lu\n", _eventCount, _nextId);
-      } else {
-        Serial.printf("[EVENT] JSON ayristirma hatasi: %s\n", err.c_str());
+        _eventCount++;
       }
     }
   }
+
+  f.close();
+  if (_nextId == 0) _nextId = 1;
+  Serial.printf("[EVENT] Akis modunda %d olay yuklendi. Sonraki ID: %lu\n", _eventCount, _nextId);
 }
 
 void eventLog(const char* uid, const char* name, EventType type, unsigned long timestamp) {
@@ -72,7 +90,7 @@ void eventLog(const char* uid, const char* name, EventType type, unsigned long t
     eventCleanup();
   }
 
-  // 2. Hala doluysa once en eski senkronize olayi cikar, hic senkronize yoksa en eski olayi cikar
+  // 2. Hala doluysa once en eski senkronize olayi cikar
   if (_eventCount >= MAX_PENDING_EVENTS) {
     int oldestSyncedIdx = -1;
     for (int i = 0; i < _eventCount; i++) {
@@ -88,7 +106,18 @@ void eventLog(const char* uid, const char* name, EventType type, unsigned long t
       }
       _eventCount--;
     } else {
-      // Tum olaylar senkronize edilmemis olsa bile yer acmak icin en eski olayi cikar
+      // Yer kalmadi ve hic senkronize kayit yok: Puantaj kaybi olmamasi icin en eski kaydi arsiv dosyasina yedekle
+      File arch = LittleFS.open("/events_archive.json", "a");
+      if (arch) {
+        char escArchName[64];
+        jsonEscape(_events[0].name, escArchName, sizeof(escArchName));
+        char escArchUid[48];
+        jsonEscape(_events[0].uid, escArchUid, sizeof(escArchUid));
+        arch.printf("{\"id\":%lu,\"uid\":\"%s\",\"name\":\"%s\",\"type\":%d,\"ts\":%lu,\"date\":\"%s\"}\n",
+                    _events[0].id, escArchUid, escArchName, (int)_events[0].type, _events[0].timestamp, _events[0].date);
+        arch.close();
+        Serial.printf("[EVENT] UYARI: Olay arabellegi doldu! Olay #%lu /events_archive.json dosyasina yedeklendi.\n", _events[0].id);
+      }
       for (int i = 0; i < _eventCount - 1; i++) {
         _events[i] = _events[i + 1];
       }
@@ -122,7 +151,7 @@ void eventLog(const char* uid, const char* name, EventType type, unsigned long t
 
   eventSave();
 
-  Serial.printf("Olay kaydedildi: %s - %s\n", ev.name, eventTypeToStr(type));
+  Serial.printf("[EVENT] Olay kaydedildi: %s - %s\n", ev.name, eventTypeToStr(type));
 }
 
 int eventPendingCount() {
@@ -141,12 +170,14 @@ LogEvent* eventGetPending(int& count) {
 }
 
 void eventMarkSynced(unsigned long id) {
+  eventMarkSyncedNoSave(id);
+  eventSave();
+}
+
+void eventMarkSyncedNoSave(unsigned long id) {
   for (int i = 0; i < _eventCount; i++) {
     if (_events[i].id == id) {
-      if (!_events[i].synced) {
-        _events[i].synced = true;
-        eventSave();
-      }
+      _events[i].synced = true;
       return;
     }
   }
@@ -154,7 +185,7 @@ void eventMarkSynced(unsigned long id) {
 
 void eventCleanup() {
   unsigned long now = timeNow();
-  const unsigned long SEVEN_DAYS = 7UL * 24UL * 3600UL; // 604800 saniye
+  const unsigned long SEVEN_DAYS = 7UL * 24UL * 3600UL;
 
   bool checkTime = (now > SEVEN_DAYS);
   unsigned long cutoff = checkTime ? (now - SEVEN_DAYS) : 0;
@@ -188,26 +219,57 @@ void eventCleanup() {
 }
 
 void eventSave() {
-  size_t docSize = 256 + (size_t)_eventCount * 192;
-  DynamicJsonDocument doc(docSize);
-
-  doc["nextId"] = _nextId;
-  JsonArray arr = doc.createNestedArray("events");
-
-  for (int i = 0; i < _eventCount; i++) {
-    JsonObject obj = arr.createNestedObject();
-    obj["id"] = _events[i].id;
-    obj["uid"] = _events[i].uid;
-    obj["name"] = _events[i].name;
-    obj["type"] = (uint8_t)_events[i].type;
-    obj["ts"] = _events[i].timestamp;
-    obj["date"] = _events[i].date;
-    obj["synced"] = _events[i].synced;
+  // ATOMIK AKIS (STREAMING) YAZMA:
+  // RAM'de devasa 96KB JSON tahsis etmez, doğrudan dosyaya stream olarak yazar!
+  String tmpPath = String(PATH_EVENTS) + ".tmp";
+  File f = LittleFS.open(tmpPath.c_str(), "w");
+  if (!f) {
+    Serial.println(F("[EVENT] HATA: Gecici dosya olusturulamadi!"));
+    return;
   }
 
-  String output;
-  serializeJson(doc, output);
-  storageWrite(PATH_EVENTS, output);
+  f.print("{\"nextId\":");
+  f.print(_nextId);
+  f.print(",\"events\":[\n");
+
+  char lineBuf[384];
+  char escName[64];
+  char escUid[48];
+  for (int i = 0; i < _eventCount; i++) {
+    jsonEscape(_events[i].name, escName, sizeof(escName));
+    jsonEscape(_events[i].uid, escUid, sizeof(escUid));
+    snprintf(lineBuf, sizeof(lineBuf),
+             "{\"id\":%lu,\"uid\":\"%s\",\"name\":\"%s\",\"type\":%d,\"ts\":%lu,\"date\":\"%s\",\"synced\":%s}%s\n",
+             _events[i].id,
+             escUid,
+             escName,
+             (int)_events[i].type,
+             _events[i].timestamp,
+             _events[i].date,
+             _events[i].synced ? "true" : "false",
+             (i < _eventCount - 1) ? "," : "");
+    f.print(lineBuf);
+  }
+
+  f.print("]}\n");
+  f.flush();
+  f.close();
+
+  // ATOMIK YENIDEN ADLANDIRMA:
+  // LittleFS lfs_rename hedef dosyayi atomik olarak degistirir.
+  // Eski dosyayi onceden silmeyiz boylece guc kesintisinde olay kayitlari kaybolmaz.
+  if (!LittleFS.rename(tmpPath.c_str(), PATH_EVENTS)) {
+    String bakPath = String(PATH_EVENTS) + ".bak";
+    LittleFS.remove(bakPath.c_str());
+    LittleFS.rename(PATH_EVENTS, bakPath.c_str());
+    if (!LittleFS.rename(tmpPath.c_str(), PATH_EVENTS)) {
+      Serial.println(F("[EVENT] HATA: events.json atomik yeniden adlandirilamadi!"));
+      LittleFS.rename(bakPath.c_str(), PATH_EVENTS);
+      LittleFS.remove(tmpPath.c_str());
+      return;
+    }
+    LittleFS.remove(bakPath.c_str());
+  }
 }
 
 int eventTotalCount() {

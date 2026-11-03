@@ -15,4 +15,6 @@ void syncDownloadEmployees();     // Personel listesini Firestore'dan indir
 void syncDownloadSettings();      // Ayarlari Firestore'dan indir
 void syncUploadEmployeeState(const char* uid, EmployeeState state);  // Personel durumunu guncelle
 void syncUploadNewEmployee(const char* uid, const char* name);  // Yeni personeli Firestore'a yukle
+void syncDeleteEmployee(const char* uid);  // Personeli Firestore'da pasife al / sil
+bool syncUploadShiftSettings(const ShiftConfig& shift);  // Cihazdan mesai saatlerini Firestore'a guncelle
 void syncUploadAllEmployees();     // Cihazdaki kayitli tum personelleri Firestore'a senkronize et

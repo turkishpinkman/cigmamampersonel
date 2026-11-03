@@ -48,14 +48,14 @@ static String cleanTurkishChars(const char* input) {
     return out;
 }
 
-// Yeni arayuz paleti: koyu lacivert, turkuaz ve amber.
-#define UI_BG       0x0864
-#define UI_PANEL    0x10E7
-#define UI_PANEL_2  0x1949
-#define UI_TEAL     0x2F18
-#define UI_AMBER    0xFDA8
-#define UI_RED      0xFAEE
-#define UI_MUTED    0x8D18
+// Yeni arayuz paleti: koyu erik, elektrik moru ve asit yesili.
+#define UI_BG       0x20C5
+#define UI_PANEL    0x3147
+#define UI_PANEL_2  0x4A0B
+#define UI_TEAL     0x9BDF
+#define UI_AMBER    0xD7AD
+#define UI_RED      0xFB6F
+#define UI_MUTED    0xB578
 #define UI_WHITE    0xFFFF
 
 static void drawTextFont(int16_t x, int16_t baseline, const char* text, uint16_t color,
@@ -64,6 +64,37 @@ static void drawTextFont(int16_t x, int16_t baseline, const char* text, uint16_t
     String clean = cleanTurkishChars(text);
     tft.setTextSize(1);
     tft.setFont(font);
+    tft.setTextColor(color);
+    tft.setCursor(x, baseline);
+    tft.print(clean);
+    tft.setFont();
+}
+
+static void drawFittedText(int16_t x, int16_t baseline, int16_t maxWidth, const char* text,
+                           uint16_t color, const GFXfont* font = &FreeSansBold12pt7b,
+                           const GFXfont* compactFont = &FreeSansBold9pt7b) {
+    if (!text) return;
+    String clean = cleanTurkishChars(text);
+    tft.setTextSize(1);
+    tft.setFont(font);
+    int16_t x1, y1;
+    uint16_t textW, textH;
+    tft.getTextBounds(clean.c_str(), 0, 0, &x1, &y1, &textW, &textH);
+
+    if (textW > maxWidth) {
+        tft.setFont(compactFont);
+        tft.getTextBounds(clean.c_str(), 0, 0, &x1, &y1, &textW, &textH);
+        while (textW > maxWidth && clean.length() > 1) {
+            clean.remove(clean.length() - 1);
+            String shortened = clean + ".";
+            tft.getTextBounds(shortened.c_str(), 0, 0, &x1, &y1, &textW, &textH);
+            if (textW <= maxWidth) {
+                clean = shortened;
+                break;
+            }
+        }
+    }
+
     tft.setTextColor(color);
     tft.setCursor(x, baseline);
     tft.print(clean);
@@ -538,9 +569,9 @@ void uiDrawEmployeeList(Employee* emps, int totalSlots, int page) {
     for (int r = 0; r < 4; r++) {
         int idx = getEmployeeIndexOnPage(emps, totalSlots, page, r);
         if (idx >= 0) {
-            int16_t rowY = 38 + r * 37;
-            tft.fillRoundRect(12, rowY, 296, 34, 7, UI_PANEL);
-            tft.drawRoundRect(12, rowY, 296, 34, 7, UI_PANEL_2);
+            int16_t rowY = 38 + r * 38;
+            tft.fillRoundRect(12, rowY, 296, 36, 7, UI_PANEL);
+            tft.drawRoundRect(12, rowY, 296, 36, 7, UI_PANEL_2);
 
             // Durum rengi ve metni
             uint16_t stColor = UI_MUTED;
@@ -553,10 +584,10 @@ void uiDrawEmployeeList(Employee* emps, int totalSlots, int page) {
                 stText = "MOLADA";
             }
 
-            tft.fillRoundRect(17, rowY + 7, 4, 20, 2, stColor);
-            drawSmallText(29, rowY + 8, emps[idx].name, UI_WHITE);
-            drawSmallText(29, rowY + 22, emps[idx].uid, UI_MUTED);
-            drawSmallText(SCREEN_W - 80, rowY + 19, stText, stColor);
+            tft.fillRoundRect(17, rowY + 8, 4, 20, 2, stColor);
+            drawFittedText(29, rowY + 22, 198, emps[idx].name, UI_WHITE);
+            drawSmallText(29, rowY + 26, emps[idx].uid, UI_MUTED);
+            drawSmallText(SCREEN_W - 80, rowY + 22, stText, stColor);
         }
     }
 
@@ -588,8 +619,8 @@ int uiCheckListTouch(int16_t x, int16_t y, int page, int totalSlots, Employee* e
 
     // Personel satirlari (0..3)
     for (int r = 0; r < 4; r++) {
-        int16_t rowY = 38 + r * 37;
-        if (isInRect(x, y, 12, rowY, 296, 34, 1)) {
+        int16_t rowY = 38 + r * 38;
+        if (isInRect(x, y, 12, rowY, 296, 36, 1)) {
             int empIdx = getEmployeeIndexOnPage(emps, totalSlots, page, r);
             if (empIdx >= 0) {
                 return empIdx;

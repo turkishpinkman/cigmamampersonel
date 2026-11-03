@@ -47,6 +47,10 @@
 #define SHIFT_START_EARLY_TOLERANCE 30  // Mesai baslamadan en fazla kac dk once girise izin verilecek
 #define MAIN_SCREEN_REFRESH 5000
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
 // ==========================================
 // VARSAYILAN AYARLAR
 // ==========================================
@@ -54,9 +58,26 @@
 #define DEFAULT_SHIFT_START_M  0
 #define DEFAULT_SHIFT_END_H    17
 #define DEFAULT_SHIFT_END_M    0
+
+#ifndef DEFAULT_WIFI_SSID
 #define DEFAULT_WIFI_SSID      "G514"
+#endif
+
+#ifndef DEFAULT_WIFI_PASS
 #define DEFAULT_WIFI_PASS      "jkaf4tpn9g"
-#define DEFAULT_ADMIN_UID      "00000000"
+#endif
+
+#ifndef DEFAULT_ADMIN_UID
+#define DEFAULT_ADMIN_UID      "BB:B9:27:0B"
+#endif
+
+#ifndef OTA_ADMIN_USER
+#define OTA_ADMIN_USER         "admin"
+#endif
+
+#ifndef OTA_ADMIN_PASS
+#define OTA_ADMIN_PASS         "cigmamam2026"
+#endif
 
 // ==========================================
 // NTP AYARLARI
@@ -136,16 +157,19 @@ enum ScreenState : uint8_t {
 #define FIREBASE_PROJECT_ID   "cigmamam-personel"
 // Cihaz kimlik dogrulama (Firebase Auth)
 #define FIREBASE_DEVICE_EMAIL "device@cigmamam.com"
+#ifndef FIREBASE_DEVICE_PASS
 #define FIREBASE_DEVICE_PASS  "CigmamamDevice2026!"
+#endif
 #define FIREBASE_DEVICE_ID    "ESP32_001"
 
 // Senkronizasyon araliklari (ms)
-#define SYNC_EVENT_INTERVAL     30000    // 30 saniye - olay yukleme
+#define SYNC_EVENT_INTERVAL     15000    // 15 saniye - olay yukleme kontrolu
 #define SYNC_EMPLOYEE_INTERVAL  300000   // 5 dakika - personel indirme
 #define SYNC_SETTINGS_INTERVAL  60000    // 1 dakika - ayar ve firmware guncelleme kontrolu
+#define SYNC_BATCH_SIZE         5        // Her dongude yuklenecek maksimum olay sayisi (WDT korumasi)
 
 // Mevcut cihaz yazilim surumu
-#define CURRENT_FIRMWARE_VERSION 100     // v1.0.0 (ornegin 101 = v1.0.1)
+#define CURRENT_FIRMWARE_VERSION 111     // v1.1.1 (OTA surum takip numarasi)
 
 // ==========================================
 // VERI YAPILARI
@@ -209,4 +233,52 @@ inline const char* stateToStr(EmployeeState s) {
     case STATE_MOLADA:    return "MOLADA";
     default:              return "BILINMEYEN";
   }
+}
+
+inline void jsonEscape(const char* in, char* out, size_t maxLen) {
+  if (!in || !out || maxLen == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; in[i] != '\0' && j < maxLen - 1; i++) {
+    char c = in[i];
+    if (c == '"' || c == '\\') {
+      if (j + 2 >= maxLen) break;
+      out[j++] = '\\';
+      out[j++] = c;
+    } else if (c == '\n') {
+      if (j + 2 >= maxLen) break;
+      out[j++] = '\\';
+      out[j++] = 'n';
+    } else if (c == '\r') {
+      if (j + 2 >= maxLen) break;
+      out[j++] = '\\';
+      out[j++] = 'r';
+    } else if (c == '\t') {
+      if (j + 2 >= maxLen) break;
+      out[j++] = '\\';
+      out[j++] = 't';
+    } else if ((unsigned char)c >= 32) {
+      out[j++] = c;
+    }
+  }
+  out[j] = '\0';
+}
+
+inline void normalizeUID(const char* in, char* out, size_t maxLen) {
+  if (!in || !out || maxLen == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; in[i] != '\0' && j < maxLen - 1; i++) {
+    if (in[i] != ':' && in[i] != ' ' && in[i] != '-') {
+      out[j++] = toupper((unsigned char)in[i]);
+    }
+  }
+  out[j] = '\0';
+}
+
+inline bool uidMatch(const char* a, const char* b) {
+  if (!a || !b) return false;
+  char normA[32];
+  char normB[32];
+  normalizeUID(a, normA, sizeof(normA));
+  normalizeUID(b, normB, sizeof(normB));
+  return (strcmp(normA, normB) == 0);
 }

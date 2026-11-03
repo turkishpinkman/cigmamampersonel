@@ -1,14 +1,223 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /employees/{employee} {
-      allow read, write: if request.auth != null;
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: employees
+    // Document ID: NFC UID (or sanitized alphanumeric UID, e.g. BBB9270B)
+    // Fields:
+    //   - uid: string (1-64 chars, required, immutable on update) - Card UID
+    //   - name: string (1-100 chars, required) - Employee full name
+    //   - state: int/number (0: Out/Disarida, 1: Working/Calisiyor, 2: On Break/Molada, required)
+    //   - active: bool (required) - Active employee flag
+    //   - hasCustomShift: bool (optional) - True if custom shift applied
+    //   - shiftStartHour: int/number (0-23, optional)
+    //   - shiftStartMinute: int/number (0-59, optional)
+    //   - shiftEndHour: int/number (0-23, optional)
+    //   - shiftEndMinute: int/number (0-59, optional)
+    //   - lastUpdate: int/number/timestamp (optional) - Last status change timestamp
+    //   - createdAt: int/number/timestamp (optional) - Creation timestamp
+    //   - lastEventTime: int/number (optional, >= 0)
+    //   - breakStartTime: int/number (optional, >= 0)
+    //   - breakCount: int/number (optional, >= 0)
+    //   - lastEvent: int/number (optional, >= 0)
+    //   - breakStart: int/number (optional, >= 0)
+    //
+    // Collection: events
+    // Document ID: Auto-generated or deterministic (e.g. ESP32_001_<localId>)
+    // Fields:
+    //   - uid: string (1-64 chars, required) - Employee card UID
+    //   - type: string (required, in ['GIRIS', 'CIKIS', 'MOLA_BAS', 'MOLA_BIT', 'OTO_CIKIS'])
+    //   - timestamp: int/number/timestamp (required, > 0) - Event timestamp
+    //   - employeeName: string (0-100 chars, optional)
+    //   - date: string (0-30 chars, optional)
+    //   - deviceId: string (0-64 chars, optional) - ID of registering terminal
+    //   - localId: int/number (optional, >= 0) - Local circular buffer index
+    //   - createdAt: int/number/timestamp (optional)
+    //
+    // Collection: settings
+    // Document ID: 'main' or other settings section (e.g. 'shift')
+    // Fields:
+    //   - shiftStartHour: int/number (0-23, optional)
+    //   - shiftStartMinute: int/number (0-59, optional)
+    //   - shiftEndHour: int/number (0-23, optional)
+    //   - shiftEndMinute: int/number (0-59, optional)
+    //   - adminUID: string (0-64 chars, optional) - Master NFC UID for physical admin card
+    //   - deviceId: string (0-64 chars, optional)
+    //   - firmwareTargetVersion: int/number (optional, >= 0)
+    //   - firmwareUrl: string (0-500 chars, optional)
+    //   - firmwareRequestedAt: int/number/timestamp (optional)
+    //   - updatedAt: int/number/timestamp (optional)
+    //   - lastSyncTime: int/number/timestamp (optional)
+    //   - deviceStatus: string (0-50 chars, optional)
+    //   - deviceIp: string (0-45 chars, optional)
+    //   - wifiRssi: int/number (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
     }
-    match /events/{event} {
-      allow read, write: if request.auth != null;
+
+    function isDevice() {
+      return isAuthenticated() &&
+        request.auth.token.email == 'device@cigmamam.com';
     }
-    match /settings/{setting} {
-      allow read, write: if request.auth != null;
+
+    // Guvenli yonetici kontrolu: Custom Claims ve guvenilir yonetici hesaplari
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'admin' ||
+        (
+          request.auth.token.email in ['yonetici@cigmamam.com', 'admin@cigmamam.com'] &&
+          request.auth.token.email != 'device@cigmamam.com'
+        )
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidEmployee(data) {
+      return hasRequiredFields(['uid', 'name', 'state', 'active']) &&
+        hasOnlyAllowedFields([
+          'uid', 'name', 'state', 'active', 'hasCustomShift',
+          'shiftStartHour', 'shiftStartMinute', 'shiftEndHour', 'shiftEndMinute',
+          'lastUpdate', 'createdAt', 'lastEventTime', 'breakStartTime',
+          'breakCount', 'lastEvent', 'breakStart'
+        ]) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 64 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        (data.state is int || data.state is number) && data.state >= 0 && data.state <= 2 &&
+        data.active is bool &&
+        (!('hasCustomShift' in data) || data.hasCustomShift is bool) &&
+        (!('shiftStartHour' in data) || ((data.shiftStartHour is int || data.shiftStartHour is number) && data.shiftStartHour >= 0 && data.shiftStartHour <= 23)) &&
+        (!('shiftStartMinute' in data) || ((data.shiftStartMinute is int || data.shiftStartMinute is number) && data.shiftStartMinute >= 0 && data.shiftStartMinute <= 59)) &&
+        (!('shiftEndHour' in data) || ((data.shiftEndHour is int || data.shiftEndHour is number) && data.shiftEndHour >= 0 && data.shiftEndHour <= 23)) &&
+        (!('shiftEndMinute' in data) || ((data.shiftEndMinute is int || data.shiftEndMinute is number) && data.shiftEndMinute >= 0 && data.shiftEndMinute <= 59)) &&
+        (!('lastUpdate' in data) || (data.lastUpdate is int || data.lastUpdate is number || data.lastUpdate is timestamp)) &&
+        (!('createdAt' in data) || (data.createdAt is int || data.createdAt is number || data.createdAt is timestamp)) &&
+        (!('lastEventTime' in data) || ((data.lastEventTime is int || data.lastEventTime is number) && data.lastEventTime >= 0)) &&
+        (!('breakStartTime' in data) || ((data.breakStartTime is int || data.breakStartTime is number) && data.breakStartTime >= 0)) &&
+        (!('breakCount' in data) || ((data.breakCount is int || data.breakCount is number) && data.breakCount >= 0)) &&
+        (!('lastEvent' in data) || ((data.lastEvent is int || data.lastEvent is number) && data.lastEvent >= 0)) &&
+        (!('breakStart' in data) || ((data.breakStart is int || data.breakStart is number) && data.breakStart >= 0));
+    }
+
+    function isValidEvent(data) {
+      return hasRequiredFields(['uid', 'type', 'timestamp']) &&
+        hasOnlyAllowedFields([
+          'uid', 'employeeName', 'type', 'timestamp',
+          'date', 'deviceId', 'localId', 'createdAt'
+        ]) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 64 &&
+        data.type is string && data.type in ['GIRIS', 'CIKIS', 'MOLA_BAS', 'MOLA_BIT', 'OTO_CIKIS'] &&
+        (data.timestamp is int || data.timestamp is number || data.timestamp is timestamp) &&
+        (data.timestamp is timestamp || data.timestamp > 0) &&
+        (!('employeeName' in data) || (data.employeeName is string && data.employeeName.size() <= 100)) &&
+        (!('date' in data) || (data.date is string && data.date.size() <= 30)) &&
+        (!('deviceId' in data) || (data.deviceId is string && data.deviceId.size() <= 64)) &&
+        (!('localId' in data) || ((data.localId is int || data.localId is number) && data.localId >= 0)) &&
+        (!('createdAt' in data) || (data.createdAt is int || data.createdAt is number || data.createdAt is timestamp));
+    }
+
+    function isValidSettings(data) {
+      return hasOnlyAllowedFields([
+          'shiftStartHour', 'shiftStartMinute', 'shiftEndHour', 'shiftEndMinute',
+          'adminUID', 'deviceId', 'firmwareTargetVersion', 'firmwareUrl',
+          'firmwareRequestedAt', 'updatedAt', 'lastSyncTime', 'deviceStatus',
+          'deviceIp', 'wifiRssi'
+        ]) &&
+        (!('shiftStartHour' in data) || ((data.shiftStartHour is int || data.shiftStartHour is number) && data.shiftStartHour >= 0 && data.shiftStartHour <= 23)) &&
+        (!('shiftStartMinute' in data) || ((data.shiftStartMinute is int || data.shiftStartMinute is number) && data.shiftStartMinute >= 0 && data.shiftStartMinute <= 59)) &&
+        (!('shiftEndHour' in data) || ((data.shiftEndHour is int || data.shiftEndHour is number) && data.shiftEndHour >= 0 && data.shiftEndHour <= 23)) &&
+        (!('shiftEndMinute' in data) || ((data.shiftEndMinute is int || data.shiftEndMinute is number) && data.shiftEndMinute >= 0 && data.shiftEndMinute <= 59)) &&
+        (!('adminUID' in data) || (data.adminUID is string && data.adminUID.size() <= 64)) &&
+        (!('deviceId' in data) || (data.deviceId is string && data.deviceId.size() <= 64)) &&
+        (!('firmwareTargetVersion' in data) || ((data.firmwareTargetVersion is int || data.firmwareTargetVersion is number) && data.firmwareTargetVersion >= 0)) &&
+        (!('firmwareUrl' in data) || (data.firmwareUrl is string && data.firmwareUrl.size() <= 500)) &&
+        (!('firmwareRequestedAt' in data) || (data.firmwareRequestedAt is int || data.firmwareRequestedAt is number || data.firmwareRequestedAt is timestamp)) &&
+        (!('updatedAt' in data) || (data.updatedAt is int || data.updatedAt is number || data.updatedAt is timestamp)) &&
+        (!('lastSyncTime' in data) || (data.lastSyncTime is int || data.lastSyncTime is number || data.lastSyncTime is timestamp)) &&
+        (!('deviceStatus' in data) || (data.deviceStatus is string && data.deviceStatus.size() <= 50)) &&
+        (!('deviceIp' in data) || (data.deviceIp is string && data.deviceIp.size() <= 45)) &&
+        (!('wifiRssi' in data) || (data.wifiRssi is int || data.wifiRssi is number));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // 1. Personel koleksiyonu (employees)
+    match /employees/{employeeId} {
+      // Sadece yonetici ve terminal cihaz personel listesini okuyabilir
+      allow read: if isAuthenticated() && (isAdmin() || isDevice());
+
+      // Personel olusturma: Yonetici veya yeni kart tanimlayan yetkili terminal cihaz
+      allow create: if (isAdmin() || isDevice()) && isValidEmployee(request.resource.data);
+
+      // Personel guncelleme:
+      // - Yonetici tum izinli alanlari guncelleyebilir (uid degistirilemez)
+      // - Cihaz SADECE durum/mesai olay alanlarini (state, lastUpdate, lastEventTime vb.) guncelleyebilir
+      allow update: if isValidEmployee(request.resource.data) &&
+        request.resource.data.uid == resource.data.uid &&
+        (
+          isAdmin() ||
+          (
+            isDevice() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'state', 'lastUpdate', 'lastEventTime', 'breakStartTime',
+              'breakCount', 'lastEvent', 'breakStart', 'active'
+            ])
+          )
+        );
+
+      // SADECE yonetici personeli silebilir; cihaz silemez!
+      allow delete: if isAdmin();
+    }
+
+    // 2. Olaylar / Giris-Cikis kayitlari (events)
+    match /events/{eventId} {
+      // Guvenlik ve KVKK: Olay kayitlarini SADECE yonetici okuyabilir
+      allow read: if isAdmin();
+
+      // Cihaz ve yonetici olay kaydedebilir; veri semasi zorunludur
+      allow create: if (isAdmin() || isDevice()) && isValidEvent(request.resource.data);
+
+      // Gecmis olaylar degistirilemez (Immutable Audit Log)
+      allow update: if false;
+
+      // SADECE yonetici gecmis olaylari silebilir; cihaz gecmisi silemez!
+      allow delete: if isAdmin();
+    }
+
+    // 3. Sistem Ayarlari (settings)
+    match /settings/{settingId} {
+      // Cihaz ve yonetici ayar dokumanlarini okuyabilir
+      allow read: if isAuthenticated() && (isAdmin() || isDevice());
+
+      // Hem yonetici hem cihaz ayar yazabilir (mesai saatleri, cihaz durumu vb.)
+      allow create, update: if (isAdmin() || isDevice()) && isValidSettings(request.resource.data);
+
+      // Ayar dokumanini silme yetkisi sadece yoneticiye aittir
+      allow delete: if isAdmin();
     }
   }
 }

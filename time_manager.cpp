@@ -122,10 +122,18 @@ void timeLoadBackup() {
     return;
   }
   
-  // ESP32 yeniden baslatildi, millis() sifirdan baslar
-  // Kaydedilen zaman yaklasik olarak dogrudur (kaydetme-reboot arasi kayip)
   _ntpMillis = millis();
-  _timeValid = true;
+  
+  // Guc kesintisi (Power-on) sonrasi saat guvenilmezdir (cihaz saatlerce kapali kalmis olabilir)
+  // Sadece yazilimsal reset veya watchdog sonrasi anlik baslatmada gecici gecerli sayilabilir
+  esp_reset_reason_t reason = esp_reset_reason();
+  if (reason == ESP_RST_SW || reason == ESP_RST_TASK_WDT) {
+    _timeValid = true;
+    Serial.println("[ZAMAN] Yazilimsal reset sonrasi saat yedekten gecici olarak aktif edildi");
+  } else {
+    _timeValid = false;
+    Serial.println("[ZAMAN] Soguk baslatma! Gercek zaman icin NTP senkronizasyonu bekleniyor...");
+  }
   
   char buf[20];
   timeFormat(buf, _ntpTime);

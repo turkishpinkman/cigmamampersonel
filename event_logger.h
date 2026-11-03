@@ -15,8 +15,11 @@ int eventPendingCount();
 // Bekleyen olaylari sorgulamak icin dizi pointer'i dondurur (count = toplam olay sayisi)
 LogEvent* eventGetPending(int& count);
 
-// Belirtilen ID'ye sahip olayi senkronize edilmis olarak isaretler
+// Belirtilen ID'ye sahip olayi senkronize edilmis olarak isaretler (aninda diske kaydeder)
 void eventMarkSynced(unsigned long id);
+
+// Senkronize olarak isaretler fakat diske yazmaz (toplu yuklemelerde batch bitiminde eventSave cagrilir)
+void eventMarkSyncedNoSave(unsigned long id);
 
 // Eski senkronize edilmis olaylari temizler (7 gun ve daha eski olanlar)
 void eventCleanup();
