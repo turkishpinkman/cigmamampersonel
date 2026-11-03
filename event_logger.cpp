@@ -2,6 +2,7 @@
 #include "config.h"
 #include "storage_manager.h"
 #include "time_manager.h"
+#include <FS.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <string.h>

@@ -6,6 +6,8 @@
 #include "event_logger.h"
 #include "system_controller.h"
 #include "ota_manager.h"
+#include <FS.h>
+#include <LittleFS.h>
 #include <esp_task_wdt.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>

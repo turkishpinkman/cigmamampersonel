@@ -1,6 +1,8 @@
 #pragma once
 
 #include "config.h"
+#include <FS.h>
+#include <LittleFS.h>
 
 // ============================================================================
 // LITTLEFS DEPOLAMA YONETICISI
