@@ -8,6 +8,7 @@
 // ============================================================================
 
 bool storageInit();                              // LittleFS baslat
+bool storageIsReady();                           // LittleFS erisilebilir durumda mi?
 String storageRead(const char* path);            // Dosya oku, hata durumunda bos string
 bool storageWrite(const char* path, const String& data);  // Atomic yazma
 bool storageAppend(const char* path, const String& data); // Dosyaya ekle

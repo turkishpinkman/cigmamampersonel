@@ -126,6 +126,11 @@ static void _loadConfig() {
         _config.shift.startMinute = shiftObj["sm"] | 0;
         _config.shift.endHour = shiftObj["eh"] | 17;
         _config.shift.endMinute = shiftObj["em"] | 0;
+
+        // Baslangic ve bitis saati ayni olamaz; kural hatasini onle
+        if (_config.shift.startHour == _config.shift.endHour && _config.shift.startMinute == _config.shift.endMinute) {
+            _config.shift.endHour = (_config.shift.startHour + 9) % 24;
+        }
     }
 
     Serial.printf("[SYSTEM] Yapilandirma yuklendi: SSID=%s, AdminUID=%s, Mesai=%02d:%02d-%02d:%02d\n",
@@ -158,7 +163,7 @@ static void _returnToMain() {
     _lastMainRefresh = millis();
 }
 
-// Mesai bitiminde iceride veya molada unutulan personelleri otomatik cikarir
+// Mesai bitiminde iceride veya molada unutulan personelleri otomatik cikarir (Gece vardiyasi destekli)
 static void _autoCheckoutAll() {
     uint8_t h = timeGetHour();
     uint8_t m = timeGetMinute();
@@ -172,26 +177,52 @@ static void _autoCheckoutAll() {
     Employee* all = employeeGetAll();
     int totalSlots = employeeGetTotalSlots();
     unsigned long checkoutTime = timeNow();
+    if (checkoutTime == 0) return;
 
     for (int i = 0; i < totalSlots; i++) {
         if (!all[i].active) continue;
         if (all[i].state == STATE_MOLADA || all[i].state == STATE_CALISIYOR) {
             ShiftConfig activeShift = all[i].hasCustomShift ? all[i].customShift : _config.shift;
-            int empShiftEndMin = activeShift.endHour * 60 + activeShift.endMinute;
-            
-            // Personelin son kart okutma zamanini yerel saate cevir
-            time_t lastEvt = (time_t)all[i].lastEventTime;
-            struct tm* lastTm = localtime(&lastEvt);
-            int lastEvtMin = lastTm ? (lastTm->tm_hour * 60 + lastTm->tm_min) : 0;
+            int startMin = activeShift.startHour * 60 + activeShift.startMinute;
+            int endMin = activeShift.endHour * 60 + activeShift.endMinute;
+            bool isOvernight = (startMin > endMin);
 
-            // Kural: Yalnizca mesai bitiminden ONCE girmis ve mesai bitiminde hala iceride olanlar cikarilir.
-            // Mesai bitiminden sonra kart basip fazla mesaiye kalanlar ASLA otomatik cikarilmaz!
-            // Cikis, mesai bitiminden SHIFT_END_TOLERANCE (30 dk) sonra guvenli sekilde isletilir.
-            if (currentMin >= empShiftEndMin + SHIFT_END_TOLERANCE && lastEvtMin < empShiftEndMin) {
-                employeeSetState(i, STATE_DISARIDA, checkoutTime);
-                eventLog(all[i].uid, all[i].name, EVT_OTO_CIKIS, checkoutTime);
-                Serial.printf("[SYSTEM] Otomatik cikis yapildi: %s (%s) [Mesai Bitis: %02d:%02d]\n",
-                              all[i].name, all[i].uid, activeShift.endHour, activeShift.endMinute);
+            unsigned long elapsedSec = (checkoutTime >= all[i].lastEventTime) ? (checkoutTime - all[i].lastEventTime) : 0;
+            bool shouldCheckout = false;
+
+            // 1. Kural: 16 saatten uzun suredir iceride kalmis personel (unutulmus cikis guvenligi)
+            if (elapsedSec >= 16 * 3600UL) {
+                shouldCheckout = true;
+            } else if (elapsedSec >= 30 * 60UL) { // Henuz yeni kart okutmus personeli (30 dk icinde) cikarma
+                time_t lastEvt = (time_t)all[i].lastEventTime;
+                struct tm* lastTm = localtime(&lastEvt);
+                int lastEvtMin = lastTm ? (lastTm->tm_hour * 60 + lastTm->tm_min) : 0;
+
+                if (!isOvernight) {
+                    // Normal gunduz mesaisi (orn: 08:00 - 17:00)
+                    // Mesai bitiminden ONCE girmis ve su an mesai bitisi + tolerans gecilmis mi?
+                    if (currentMin >= endMin + SHIFT_END_TOLERANCE && lastEvtMin < endMin) {
+                        shouldCheckout = true;
+                    }
+                } else {
+                    // Gece yarisi asan vardiya (orn: 22:00 - 06:00)
+                    // Vardiya suresi icinde girmis (21:30 sonrasi veya gece 00:00 - 06:00 arasi)
+                    bool enteredDuringShift = (lastEvtMin >= (startMin - SHIFT_START_EARLY_TOLERANCE) || lastEvtMin < endMin);
+                    // Su an sabah mesai bitisi + tolerans (06:30) sonrasi mi ve aksam mesaisi henuz baslamadi mi?
+                    bool isPastEnd = (currentMin >= (endMin + SHIFT_END_TOLERANCE) && currentMin < (startMin - SHIFT_START_EARLY_TOLERANCE));
+                    if (enteredDuringShift && isPastEnd) {
+                        shouldCheckout = true;
+                    }
+                }
+            }
+
+            if (shouldCheckout) {
+                if (employeeSetState(i, STATE_DISARIDA, checkoutTime)) {
+                    eventLog(all[i].uid, all[i].name, EVT_OTO_CIKIS, checkoutTime);
+                    Serial.printf("[SYSTEM] Otomatik cikis yapildi: %s (%s) [Mesai: %02d:%02d-%02d:%02d]\n",
+                                  all[i].name, all[i].uid, activeShift.startHour, activeShift.startMinute,
+                                  activeShift.endHour, activeShift.endMinute);
+                }
             }
         }
     }
@@ -429,10 +460,14 @@ void systemHandleCard(const char* uid) {
             }
 
             // OTOMATIK GIRIS ISLEMI
-            employeeSetState(idx, STATE_CALISIYOR, timeNow());
-            eventLog(uid, emp->name, EVT_GIRIS, timeNow());
-            uiDrawInfoScreen(emp->name, "Hos geldin!", COLOR_SUCCESS);
-            buzzerSuccess();
+            if (employeeSetState(idx, STATE_CALISIYOR, timeNow())) {
+                eventLog(uid, emp->name, EVT_GIRIS, timeNow());
+                uiDrawInfoScreen(emp->name, "Hos geldin!", COLOR_SUCCESS);
+                buzzerSuccess();
+            } else {
+                uiDrawErrorScreen("Depolama Hatasi!\nKayit Alinamadi");
+                buzzerError();
+            }
             _currentScreen = SCR_INFO;
             _screenTimer = millis();
             _processing = false;
@@ -450,10 +485,14 @@ void systemHandleCard(const char* uid) {
 
         case STATE_MOLADA:
             // OTOMATIK MOLADAN DONUS ISLEMI
-            employeeSetState(idx, STATE_CALISIYOR, timeNow());
-            eventLog(uid, emp->name, EVT_MOLA_BIT, timeNow());
-            uiDrawInfoScreen(emp->name, "Moladan donus!", COLOR_SUCCESS);
-            buzzerSuccess();
+            if (employeeSetState(idx, STATE_CALISIYOR, timeNow())) {
+                eventLog(uid, emp->name, EVT_MOLA_BIT, timeNow());
+                uiDrawInfoScreen(emp->name, "Moladan donus!", COLOR_SUCCESS);
+                buzzerSuccess();
+            } else {
+                uiDrawErrorScreen("Depolama Hatasi!\nKayit Alinamadi");
+                buzzerError();
+            }
             _currentScreen = SCR_INFO;
             _screenTimer = millis();
             _processing = false;
@@ -469,10 +508,14 @@ void systemHandleTouch(int16_t x, int16_t y) {
             if (choice == 1) { // MOLA SECILDI
                 Employee* emp = employeeGet(_selectedEmployee);
                 if (emp != nullptr) {
-                    employeeSetState(_selectedEmployee, STATE_MOLADA, timeNow());
-                    eventLog(emp->uid, emp->name, EVT_MOLA_BAS, timeNow());
-                    uiDrawInfoScreen(emp->name, "Iyi molalar!", COLOR_SUCCESS);
-                    buzzerSuccess();
+                    if (employeeSetState(_selectedEmployee, STATE_MOLADA, timeNow())) {
+                        eventLog(emp->uid, emp->name, EVT_MOLA_BAS, timeNow());
+                        uiDrawInfoScreen(emp->name, "Iyi molalar!", COLOR_SUCCESS);
+                        buzzerSuccess();
+                    } else {
+                        uiDrawErrorScreen("Depolama Hatasi!\nKayit Alinamadi");
+                        buzzerError();
+                    }
                 }
                 _currentScreen = SCR_INFO;
                 _screenTimer = millis();
@@ -481,10 +524,14 @@ void systemHandleTouch(int16_t x, int16_t y) {
             } else if (choice == 2) { // CIKIS SECILDI
                 Employee* emp = employeeGet(_selectedEmployee);
                 if (emp != nullptr) {
-                    employeeSetState(_selectedEmployee, STATE_DISARIDA, timeNow());
-                    eventLog(emp->uid, emp->name, EVT_CIKIS, timeNow());
-                    uiDrawInfoScreen(emp->name, "Gule gule!", COLOR_SUCCESS);
-                    buzzerSuccess();
+                    if (employeeSetState(_selectedEmployee, STATE_DISARIDA, timeNow())) {
+                        eventLog(emp->uid, emp->name, EVT_CIKIS, timeNow());
+                        uiDrawInfoScreen(emp->name, "Gule gule!", COLOR_SUCCESS);
+                        buzzerSuccess();
+                    } else {
+                        uiDrawErrorScreen("Depolama Hatasi!\nKayit Alinamadi");
+                        buzzerError();
+                    }
                 }
                 _currentScreen = SCR_INFO;
                 _screenTimer = millis();
@@ -663,12 +710,19 @@ void systemHandleTouch(int16_t x, int16_t y) {
                 case 6: _tempShift.endMinute = (_tempShift.endMinute + 5) % 60; break;
                 case 7: _tempShift.endMinute = (_tempShift.endMinute + 55) % 60; break;
                 case 8: // Kaydet
+                    if (_tempShift.startHour == _tempShift.endHour && _tempShift.startMinute == _tempShift.endMinute) {
+                        uiDrawErrorScreen("Baslangic ve Bitis\nAyni Olamaz!");
+                        buzzerError();
+                        _currentScreen = SCR_INFO;
+                        _screenTimer = millis();
+                        break;
+                    }
                     _config.shift = _tempShift;
                     _saveConfig();
                     if (syncUploadShiftSettings(_config.shift)) {
                         uiDrawInfoScreen("", "Ayarlar kaydedildi!", COLOR_SUCCESS);
                     } else {
-                        uiDrawInfoScreen("", "Yerel kaydedildi\n(Bulut esitlenemedi)", COLOR_WARNING);
+                        uiDrawInfoScreen("", "Yerel kaydedildi\n(Kuyruga alindi)", COLOR_WARNING);
                     }
                     buzzerSuccess();
                     _currentScreen = SCR_INFO;
@@ -750,13 +804,14 @@ void systemTick() {
         _returnToMain();
     }
 
-    // 1b. YONETICI EKRANLARI HAREKETSIZLIK ZAMAN ASIMI (30 saniye):
-    // Yonetici karti okutulduktan sonra terminalin acik unutulmasini onler
+    // 1b. YONETICI EKRANLARI HAREKETSIZLIK ZAMAN ASIMI:
+    // Klavye ekraninda 90 saniye, diger yonetici ekranlarinda 60 saniye hareketsizlikte ana ekrana don
+    unsigned long adminTimeout = (_currentScreen == SCR_KEYBOARD) ? 90000UL : 60000UL;
     if ((_currentScreen == SCR_ADMIN || _currentScreen == SCR_ADMIN_ADD ||
          _currentScreen == SCR_ADMIN_LIST || _currentScreen == SCR_ADMIN_SHIFT ||
          _currentScreen == SCR_ADMIN_DELETE || _currentScreen == SCR_KEYBOARD) &&
-        (millis() - _screenTimer > 30000)) {
-        Serial.println(F("[SYSTEM] Yonetici ekrani zaman asimi (30sn), ana ekrana donuluyor."));
+        (millis() - _screenTimer > adminTimeout)) {
+        Serial.println(F("[SYSTEM] Yonetici ekrani zaman asimi, guvenli ana ekrana donuluyor."));
         _returnToMain();
     }
 
@@ -827,6 +882,9 @@ void systemSetAdminUID(const char* uid) {
 
 void systemSetShift(const ShiftConfig& shift) {
     _config.shift = shift;
+    if (_config.shift.startHour == _config.shift.endHour && _config.shift.startMinute == _config.shift.endMinute) {
+        _config.shift.endHour = (_config.shift.startHour + 9) % 24;
+    }
     _saveConfig();
     syncUploadShiftSettings(_config.shift);
     Serial.printf("[SYSTEM] Yeni mesai saatleri kaydedildi: %02d:%02d - %02d:%02d\n",

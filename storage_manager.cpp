@@ -2,8 +2,11 @@
 #include "config.h"
 #include <LittleFS.h>
 
+static bool _storageReady = false;
+
 bool storageInit() {
   Serial.println("[Storage] LittleFS baslatiliyor...");
+  _storageReady = false;
 
   // false: Baslatma basarisiz olursa verileri korumak icin otomatik bicimlendirme yapma!
   if (!LittleFS.begin(false)) {
@@ -14,6 +17,7 @@ bool storageInit() {
     }
   }
 
+  _storageReady = true;
   Serial.println("[Storage] LittleFS basariyla baslatildi.");
   Serial.print("[Storage] Toplam Alan: ");
   Serial.print(LittleFS.totalBytes());
@@ -24,6 +28,10 @@ bool storageInit() {
   Serial.println(" byte");
 
   return true;
+}
+
+bool storageIsReady() {
+  return _storageReady;
 }
 
 String storageRead(const char* path) {

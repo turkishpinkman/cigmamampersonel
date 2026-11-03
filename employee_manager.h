@@ -18,8 +18,8 @@ bool employeeAdd(const char* uid, const char* name);
 // Personeli inaktif olarak isaretler (silme islemi)
 bool employeeRemove(int index);
 
-// Personel durumunu ve zaman damgasini gunceller
-void employeeSetState(int index, EmployeeState state, unsigned long timestamp);
+// Personel durumunu ve zaman damgasini gunceller (LittleFS yazma basarisina gore bool doner)
+bool employeeSetState(int index, EmployeeState state, unsigned long timestamp);
 
 // Toplam aktif personel sayisini dondurur
 int employeeCount();
@@ -34,10 +34,10 @@ Employee* employeeGetAll();
 int employeeGetTotalSlots();
 
 // Personel ana listesini LittleFS'e kaydeder
-void employeeSave();
+bool employeeSave();
 
 // Sadece personel durumlarini LittleFS'e kaydeder (sik yapilan islem)
-void employeeSaveStates();
+bool employeeSaveStates();
 
 // Gunluk mola sayaclarini sifirlar
 void employeeResetDailyCounters();

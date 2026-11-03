@@ -145,13 +145,18 @@ bool employeeRemove(int index) {
   if (!_employees[index].active) return false;
 
   _employees[index].active = false;
-  employeeSave();
-  employeeSaveStates();
-  return true;
+  bool ok1 = employeeSave();
+  bool ok2 = employeeSaveStates();
+  return (ok1 && ok2);
 }
 
-void employeeSetState(int index, EmployeeState state, unsigned long timestamp) {
-  if (index < 0 || index >= MAX_EMPLOYEES || !_employees[index].active) return;
+bool employeeSetState(int index, EmployeeState state, unsigned long timestamp) {
+  if (index < 0 || index >= MAX_EMPLOYEES || !_employees[index].active) return false;
+
+  EmployeeState oldState = _employees[index].state;
+  unsigned long oldLastEvent = _employees[index].lastEventTime;
+  unsigned long oldBreakStart = _employees[index].breakStartTime;
+  int oldBreakCount = _employees[index].breakCount;
 
   _employees[index].state = state;
   _employees[index].lastEventTime = timestamp;
@@ -163,7 +168,16 @@ void employeeSetState(int index, EmployeeState state, unsigned long timestamp) {
     _employees[index].breakStartTime = 0;
   }
 
-  employeeSaveStates();
+  bool ok = employeeSaveStates();
+  if (!ok) {
+    Serial.printf("[EMPLOYEE] HATA: Durum diske yazilamadi, degisiklik geri aliniyor! (%s)\n", _employees[index].uid);
+    // Diske yazilamadiysa RAM durumunu geri al
+    _employees[index].state = oldState;
+    _employees[index].lastEventTime = oldLastEvent;
+    _employees[index].breakStartTime = oldBreakStart;
+    _employees[index].breakCount = oldBreakCount;
+  }
+  return ok;
 }
 
 int employeeCount() {
@@ -194,7 +208,7 @@ int employeeGetTotalSlots() {
   return MAX_EMPLOYEES;
 }
 
-void employeeSave() {
+bool employeeSave() {
   DynamicJsonDocument doc(8192);
   JsonArray arr = doc.createNestedArray("employees");
 
@@ -216,10 +230,14 @@ void employeeSave() {
 
   String output;
   serializeJson(doc, output);
-  storageWrite(PATH_EMPLOYEES, output);
+  bool ok = storageWrite(PATH_EMPLOYEES, output);
+  if (!ok) {
+    Serial.println(F("[EMPLOYEE] HATA: employees.json diske kaydedilemedi!"));
+  }
+  return ok;
 }
 
-void employeeSaveStates() {
+bool employeeSaveStates() {
   DynamicJsonDocument doc(8192);
   JsonArray arr = doc.createNestedArray("states");
 
@@ -236,7 +254,11 @@ void employeeSaveStates() {
 
   String output;
   serializeJson(doc, output);
-  storageWrite(PATH_STATES, output);
+  bool ok = storageWrite(PATH_STATES, output);
+  if (!ok) {
+    Serial.println(F("[EMPLOYEE] HATA: states.json diske kaydedilemedi!"));
+  }
+  return ok;
 }
 
 void employeeResetDailyCounters() {

@@ -94,6 +94,8 @@
 #define PATH_STATES     "/states.json"
 #define PATH_TIME       "/time.json"
 #define PATH_EVENTS     "/events.json"
+#define PATH_OUTBOX     "/outbox.json"
+#define PATH_ARCHIVE    "/events_archive.json"
 
 // ==========================================
 // EKRAN BOYUTLARI

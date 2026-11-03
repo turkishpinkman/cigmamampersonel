@@ -107,21 +107,29 @@ void eventLog(const char* uid, const char* name, EventType type, unsigned long t
       _eventCount--;
     } else {
       // Yer kalmadi ve hic senkronize kayit yok: Puantaj kaybi olmamasi icin en eski kaydi arsiv dosyasina yedekle
-      File arch = LittleFS.open("/events_archive.json", "a");
+      File arch = LittleFS.open(PATH_ARCHIVE, "a");
+      bool archOk = false;
       if (arch) {
         char escArchName[64];
         jsonEscape(_events[0].name, escArchName, sizeof(escArchName));
         char escArchUid[48];
         jsonEscape(_events[0].uid, escArchUid, sizeof(escArchUid));
-        arch.printf("{\"id\":%lu,\"uid\":\"%s\",\"name\":\"%s\",\"type\":%d,\"ts\":%lu,\"date\":\"%s\"}\n",
+        size_t bytesWritten = arch.printf("{\"id\":%lu,\"uid\":\"%s\",\"name\":\"%s\",\"type\":%d,\"ts\":%lu,\"date\":\"%s\"}\n",
                     _events[0].id, escArchUid, escArchName, (int)_events[0].type, _events[0].timestamp, _events[0].date);
+        arch.flush();
         arch.close();
-        Serial.printf("[EVENT] UYARI: Olay arabellegi doldu! Olay #%lu /events_archive.json dosyasina yedeklendi.\n", _events[0].id);
+        archOk = (bytesWritten > 0);
       }
-      for (int i = 0; i < _eventCount - 1; i++) {
-        _events[i] = _events[i + 1];
+      if (archOk) {
+        Serial.printf("[EVENT] UYARI: Olay arabellegi doldu! Olay #%lu %s dosyasina yedeklendi.\n", _events[0].id, PATH_ARCHIVE);
+        for (int i = 0; i < _eventCount - 1; i++) {
+          _events[i] = _events[i + 1];
+        }
+        _eventCount--;
+      } else {
+        Serial.println(F("[EVENT] KRITIK HATA: Arsiv dosyasina yazilamadi! Puantaj kaybi olmamasi icin eski kayit atilmadi."));
+        return;
       }
-      _eventCount--;
     }
   }
 

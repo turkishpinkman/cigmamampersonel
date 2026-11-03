@@ -147,7 +147,15 @@ void setup() {
   if (storageInit()) {
     Serial.println(F("OK"));
   } else {
-    Serial.println(F("HATA!"));
+    Serial.println(F("KRITIK HATA: LittleFS acilamadi!"));
+    displayInit();
+    displayClear();
+    uiDrawErrorScreen("Depolama Hatasi!\nCihaz Durduruldu");
+    buzzerError();
+    while (true) {
+      delay(3000);
+      buzzerError();
+    }
   }
 
   // 2. Ekran baslat (ILI9341)

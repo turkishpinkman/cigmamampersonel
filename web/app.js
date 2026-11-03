@@ -1388,9 +1388,20 @@ if (formAddEmployee) {
 }
 
 // 2. Personel Düzenle
+function safeDecode(val) {
+  if (!val) return '';
+  const str = String(val);
+  try {
+    return decodeURIComponent(str);
+  } catch (e) {
+    return str;
+  }
+}
+
+// 2. Personel Duzenle
 window.handleOpenEditModal = function(docId, rawOrEncodedName, rawOrEncodedUid) {
-  const name = rawOrEncodedName ? (String(rawOrEncodedName).includes('%') ? decodeURIComponent(rawOrEncodedName) : rawOrEncodedName) : '';
-  const uid = rawOrEncodedUid ? (String(rawOrEncodedUid).includes('%') ? decodeURIComponent(rawOrEncodedUid) : rawOrEncodedUid) : '';
+  const name = safeDecode(rawOrEncodedName);
+  const uid = safeDecode(rawOrEncodedUid);
 
   document.getElementById('edit-emp-doc-id').value = docId;
   document.getElementById('edit-emp-uid').value = uid;
@@ -1479,8 +1490,9 @@ if (formEditEmployee) {
 }
 
 // 3. Personel Sil
+// 3. Personel Sil
 window.handleOpenDeleteModal = function(docId, rawOrEncodedName) {
-  const name = rawOrEncodedName ? (String(rawOrEncodedName).includes('%') ? decodeURIComponent(rawOrEncodedName) : rawOrEncodedName) : '';
+  const name = safeDecode(rawOrEncodedName);
   document.getElementById('delete-emp-doc-id').value = docId;
   document.getElementById('delete-emp-name').textContent = name;
   openModal('modal-delete-employee');
@@ -1550,7 +1562,50 @@ function initRecordsFilters() {
   }
 }
 
-function applyRecordsFilter() {
+async function getEventsForRange(startDateStr, endDateStr) {
+  let list = [...state.events];
+  if (!startDateStr && !endDateStr) {
+    return list;
+  }
+  const oldestInMemoryTs = list.length > 0 ? Math.min(...list.map(e => e.timestamp || Infinity)) : Infinity;
+  const startTs = startDateStr ? Math.floor(new Date(startDateStr + 'T00:00:00').getTime() / 1000) : 0;
+  const endTs = endDateStr ? Math.floor(new Date(endDateStr + 'T23:59:59').getTime() / 1000) : Math.floor(Date.now() / 1000);
+
+  // Eger istenen baslangic tarihi hafizadaki en eski olaydan eskiyse veya 2000 sinirina ulasilmissa Firestore'dan direkt sorgula
+  if (startTs < oldestInMemoryTs || list.length >= 2000) {
+    try {
+      let q = db.collection('events');
+      if (startTs > 0) q = q.where('timestamp', '>=', startTs);
+      if (endTs > 0) q = q.where('timestamp', '<=', endTs);
+      q = q.orderBy('timestamp', 'desc').limit(5000);
+      const snap = await q.get();
+      const fetched = [];
+      snap.forEach(doc => {
+        const data = doc.data();
+        fetched.push({
+          id: doc.id,
+          uid: data.uid || '',
+          employeeName: data.employeeName || 'Bilinmiyor',
+          type: data.type || '',
+          timestamp: data.timestamp !== undefined ? Number(data.timestamp) : 0,
+          date: data.date || '',
+          deviceId: data.deviceId || 'ESP32_001',
+          localId: data.localId || 0
+        });
+      });
+      const map = new Map();
+      list.forEach(e => map.set(e.id, e));
+      fetched.forEach(e => map.set(e.id, e));
+      return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+    } catch (e) {
+      console.warn('[Tarihsel Olay Sorgusu Uyarisi]', e);
+      return list;
+    }
+  }
+  return list;
+}
+
+async function applyRecordsFilter() {
   const startDateStr = document.getElementById('record-filter-start')?.value || '';
   const endDateStr = document.getElementById('record-filter-end')?.value || '';
   const selectedEmpUid = document.getElementById('record-filter-employee')?.value || 'ALL';
@@ -1561,7 +1616,7 @@ function applyRecordsFilter() {
     checkedTypes.push(cb.value);
   });
 
-  let list = [...state.events];
+  let list = await getEventsForRange(startDateStr, endDateStr);
 
   // Tarih aralığı filtresi
   if (startDateStr) {
@@ -1790,7 +1845,7 @@ document.getElementById('print-report-btn')?.addEventListener('click', () => {
   window.print();
 });
 
-function generateReport() {
+async function generateReport() {
   const startDateStr = document.getElementById('report-start-date')?.value || '';
   const endDateStr = document.getElementById('report-end-date')?.value || '';
 
@@ -1801,7 +1856,8 @@ function generateReport() {
   if (printDate) printDate.textContent = `Rapor Alınma Zamanı: ${formatDateTime(new Date())}`;
 
   // Belirtilen tarih aralığındaki olayları filtrele
-  const filteredEvents = state.events.filter(evt => {
+  const allEvents = await getEventsForRange(startDateStr, endDateStr);
+  const filteredEvents = allEvents.filter(evt => {
     const evtDate = evt.date || (evt.timestamp ? getLocalDateString(new Date(evt.timestamp * 1000)) : '');
     if (startDateStr && evtDate < startDateStr) return false;
     if (endDateStr && evtDate > endDateStr) return false;

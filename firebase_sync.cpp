@@ -356,14 +356,16 @@ void syncDownloadEmployees() {
   String response = _firestoreList("employees", 100);
   if (response.length() == 0) return;
 
-  // JSON boyutunu yanita gore ayarla
-  size_t docSize = response.length() + 1024;
-  if (docSize > 16384) docSize = 16384;
+  // JSON boyutunu yanita gore dinamik ayarla (ESP32 bos heap durumuna gore 48KB'a kadar)
+  size_t freeHeap = ESP.getFreeHeap();
+  size_t docSize = response.length() + 2048;
+  if (docSize > 49152) docSize = 49152;
+  if (freeHeap > 60000 && docSize < 32768) docSize = 32768;
 
   DynamicJsonDocument doc(docSize);
   DeserializationError err = deserializeJson(doc, response);
   if (err) {
-    Serial.printf("[SYNC] Personel JSON parse hatasi: %s\n", err.c_str());
+    Serial.printf("[SYNC] Personel JSON parse hatasi: %s (Boyut: %u, Heap: %u)\n", err.c_str(), (unsigned int)docSize, (unsigned int)freeHeap);
     return;
   }
 
@@ -382,6 +384,14 @@ void syncDownloadEmployees() {
     const char* name = fields["name"]["stringValue"] | "";
     bool active = fields["active"]["booleanValue"] | true;
     bool hasCustomShift = fields["hasCustomShift"]["booleanValue"] | false;
+
+    if (strlen(uid) == 0) continue;
+
+    // Eger bu personel yerelde silinmisse ve cevrimdisi kuyrukta bekliyorsa, buluttan geri ekleme!
+    if (syncIsEmployeePendingDelete(uid)) {
+      Serial.printf("[SYNC] Personel yerelde silinmis ve kuyrukta bekliyor, indirmeden atlandi: %s\n", uid);
+      continue;
+    }
     ShiftConfig customShift = {8, 0, 17, 0};
     if (hasCustomShift) {
       if (fields.containsKey("shiftStartHour")) {
@@ -472,6 +482,13 @@ void syncDownloadEmployees() {
 // ==========================================
 void syncDownloadSettings() {
   if (!wifiIsConnected()) return;
+
+  // Eger yerel mesai ayari henuz buluta iletilemediyse (cevrimdisi degistirildiyse),
+  // buluttan gelen eski saatlerin yerel ayari ezmesini onle!
+  if (syncIsShiftPendingUpload()) {
+    Serial.println(F("[SYNC] Yerel mesai saati kuyrukta bekliyor, bulut ayari atlandi."));
+    return;
+  }
 
   String response = _firestoreGet("settings/main");
   if (response.length() == 0) return;
@@ -567,10 +584,61 @@ void syncDownloadSettings() {
 }
 
 // ==========================================
+// OUTBOX (CEVRIMDISI MUTASYON KUYRUGU) YONETIMI
+// ==========================================
+
+static void _queueOutboxLine(const String& line) {
+  storageAppend(PATH_OUTBOX, line);
+}
+
+void syncQueueEmployeeDelete(const char* uid) {
+  if (!uid || strlen(uid) == 0) return;
+  char cleanUid[32];
+  normalizeUID(uid, cleanUid, sizeof(cleanUid));
+  String line = "{\"op\":\"DEL\",\"uid\":\"" + String(cleanUid) + "\"}\n";
+  _queueOutboxLine(line);
+  Serial.printf("[OUTBOX] Personel silme cevrimdisi kuyruga alindi: %s\n", cleanUid);
+}
+
+void syncQueueEmployeeAdd(const char* uid, const char* name) {
+  if (!uid || !name) return;
+  char escName[64];
+  jsonEscape(name, escName, sizeof(escName));
+  char cleanUid[32];
+  normalizeUID(uid, cleanUid, sizeof(cleanUid));
+  String line = "{\"op\":\"ADD\",\"uid\":\"" + String(cleanUid) + "\",\"name\":\"" + String(escName) + "\"}\n";
+  _queueOutboxLine(line);
+  Serial.printf("[OUTBOX] Personel ekleme cevrimdisi kuyruga alindi: %s (%s)\n", escName, cleanUid);
+}
+
+void syncQueueShiftUpdate(const ShiftConfig& shift) {
+  String line = "{\"op\":\"SHIFT\",\"sh\":" + String(shift.startHour) +
+                ",\"sm\":" + String(shift.startMinute) +
+                ",\"eh\":" + String(shift.endHour) +
+                ",\"em\":" + String(shift.endMinute) + "}\n";
+  _queueOutboxLine(line);
+  Serial.println(F("[OUTBOX] Mesai saati guncellemesi cevrimdisi kuyruga alindi"));
+}
+
+bool syncIsEmployeePendingDelete(const char* uid) {
+  if (!uid || !storageExists(PATH_OUTBOX)) return false;
+  char cleanUid[32];
+  normalizeUID(uid, cleanUid, sizeof(cleanUid));
+  String outbox = storageRead(PATH_OUTBOX);
+  return (outbox.indexOf("\"op\":\"DEL\"") >= 0 && outbox.indexOf(cleanUid) >= 0);
+}
+
+bool syncIsShiftPendingUpload() {
+  if (!storageExists(PATH_OUTBOX)) return false;
+  String outbox = storageRead(PATH_OUTBOX);
+  return (outbox.indexOf("\"op\":\"SHIFT\"") >= 0);
+}
+
+// ==========================================
 // syncDeleteEmployee - Personeli Firestore'da pasife al
 // ==========================================
-void syncDeleteEmployee(const char* uid) {
-  if (!wifiIsConnected() || !_ensureAuth() || !uid) return;
+bool syncDeleteEmployee(const char* uid) {
+  if (!uid || strlen(uid) == 0) return false;
 
   String docPath = "employees/";
   char cleanUid[32];
@@ -583,19 +651,24 @@ void syncDeleteEmployee(const char* uid) {
   fields += "\"lastUpdate\":" + _intField(timeNow());
   fields += "}";
 
-  if (_firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=active&updateMask.fieldPaths=state&updateMask.fieldPaths=lastUpdate")) {
+  bool ok = false;
+  if (wifiIsConnected() && _ensureAuth()) {
+    ok = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=active&updateMask.fieldPaths=state&updateMask.fieldPaths=lastUpdate");
+  }
+
+  if (ok) {
     Serial.printf("[SYNC] Personel Firestore'da pasife alindi: %s\n", uid);
   } else {
-    Serial.printf("[SYNC] Personel silme Firestore'a iletilemedi: %s\n", uid);
+    Serial.printf("[SYNC] Personel silme cevrimdisi kuyruga alindi: %s\n", uid);
+    syncQueueEmployeeDelete(uid);
   }
+  return ok;
 }
 
 // ==========================================
 // syncUploadShiftSettings - Cihazdan mesai saatlerini Firestore'a yukle
 // ==========================================
 bool syncUploadShiftSettings(const ShiftConfig& shift) {
-  if (!wifiIsConnected() || !_ensureAuth()) return false;
-
   String docPath = "settings/main";
   String fields = "{";
   fields += "\"shiftStartHour\":" + _intField(shift.startHour) + ",";
@@ -605,21 +678,26 @@ bool syncUploadShiftSettings(const ShiftConfig& shift) {
   fields += "\"updatedAt\":" + _intField(timeNow());
   fields += "}";
 
-  bool ok = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute&updateMask.fieldPaths=updatedAt");
+  bool ok = false;
+  if (wifiIsConnected() && _ensureAuth()) {
+    ok = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute&updateMask.fieldPaths=updatedAt");
+  }
+
   if (ok) {
     Serial.printf("[SYNC] Cihazdan yeni mesai saatleri Firestore'a aktarildi: %02d:%02d - %02d:%02d\n",
                   shift.startHour, shift.startMinute, shift.endHour, shift.endMinute);
   } else {
-    Serial.println(F("[SYNC] HATA: Mesai saatleri Firestore'a guncellenemedi!"));
+    Serial.println(F("[SYNC] Mesai saatleri guncellemesi cevrimdisi kuyruga alindi."));
+    syncQueueShiftUpdate(shift);
   }
   return ok;
 }
 
 // ==========================================
-// syncUploadNewEmployee - Yeni personeli yukle
+// syncUploadNewEmployee - Yeni personeli yukle (Mevcut durumu korur ve updateMask kullanir)
 // ==========================================
-void syncUploadNewEmployee(const char* uid, const char* name) {
-  if (!wifiIsConnected() || !_ensureAuth()) return;
+bool syncUploadNewEmployee(const char* uid, const char* name) {
+  if (!uid || !name) return false;
 
   String docPath = "employees/";
   String safeUid = uid;
@@ -629,11 +707,12 @@ void syncUploadNewEmployee(const char* uid, const char* name) {
   int idx = employeeFind(uid);
   Employee* emp = (idx >= 0) ? employeeGet(idx) : nullptr;
   bool hasCustom = (emp && emp->hasCustomShift);
+  unsigned long currentState = emp ? (unsigned long)emp->state : 0;
 
   String fields = "{";
   fields += "\"uid\":" + _strField(uid) + ",";
   fields += "\"name\":" + _strField(name) + ",";
-  fields += "\"state\":" + _intField(0) + ",";
+  fields += "\"state\":" + _intField(currentState) + ",";
   fields += "\"active\":" + _boolField(true) + ",";
   fields += "\"hasCustomShift\":" + _boolField(hasCustom) + ",";
   if (hasCustom && emp) {
@@ -646,11 +725,23 @@ void syncUploadNewEmployee(const char* uid, const char* name) {
   fields += "\"createdAt\":" + _intField(timeNow());
   fields += "}";
 
-  if (_firestorePatch(docPath.c_str(), fields)) {
-    Serial.printf("[SYNC] Yeni personel Firestore'a yuklendi: %s (%s)\n", name, uid);
-  } else {
-    Serial.printf("[SYNC] Personel yukleme basarisiz: %s\n", uid);
+  String mask = "updateMask.fieldPaths=uid&updateMask.fieldPaths=name&updateMask.fieldPaths=state&updateMask.fieldPaths=active&updateMask.fieldPaths=hasCustomShift&updateMask.fieldPaths=lastUpdate&updateMask.fieldPaths=createdAt";
+  if (hasCustom) {
+    mask += "&updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute";
   }
+
+  bool ok = false;
+  if (wifiIsConnected() && _ensureAuth()) {
+    ok = _firestorePatch(docPath.c_str(), fields, mask.c_str());
+  }
+
+  if (ok) {
+    Serial.printf("[SYNC] Personel Firestore'a yuklendi: %s (%s) [Durum: %lu]\n", name, uid, currentState);
+  } else {
+    Serial.printf("[SYNC] Personel cevrimdisi kuyruga alindi: %s (%s)\n", name, uid);
+    syncQueueEmployeeAdd(uid, name);
+  }
+  return ok;
 }
 
 // ==========================================
@@ -677,15 +768,187 @@ void syncUploadAllEmployees() {
 }
 
 // ==========================================
+// syncProcessOutbox - Cevrimdisi bekleyen mutasyonlari isle
+// ==========================================
+void syncProcessOutbox() {
+  if (!wifiIsConnected() || !_ensureAuth() || !storageExists(PATH_OUTBOX)) return;
+
+  File f = LittleFS.open(PATH_OUTBOX, "r");
+  if (!f) return;
+
+  String remaining = "";
+  StaticJsonDocument<512> itemDoc;
+  bool anyProcessed = false;
+
+  while (f.available()) {
+    esp_task_wdt_reset();
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    itemDoc.clear();
+    DeserializationError err = deserializeJson(itemDoc, line);
+    if (err) continue;
+
+    const char* op = itemDoc["op"] | "";
+    bool success = false;
+
+    if (strcmp(op, "DEL") == 0) {
+      const char* uid = itemDoc["uid"] | "";
+      if (strlen(uid) > 0) {
+        String docPath = "employees/" + String(uid);
+        String fields = "{\"active\":{\"booleanValue\":false},\"state\":{\"integerValue\":\"0\"},\"lastUpdate\":" + _intField(timeNow()) + "}";
+        success = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=active&updateMask.fieldPaths=state&updateMask.fieldPaths=lastUpdate");
+        if (success) {
+          Serial.printf("[OUTBOX] Bekleyen silme Firestore'a iletildi: %s\n", uid);
+        }
+      }
+    } else if (strcmp(op, "ADD") == 0) {
+      const char* uid = itemDoc["uid"] | "";
+      const char* name = itemDoc["name"] | "";
+      if (strlen(uid) > 0) {
+        // Dogrudan Firestore patch dene
+        int idx = employeeFind(uid);
+        Employee* emp = (idx >= 0) ? employeeGet(idx) : nullptr;
+        bool hasCustom = (emp && emp->hasCustomShift);
+        unsigned long currentState = emp ? (unsigned long)emp->state : 0;
+
+        String docPath = "employees/" + String(uid);
+        String fields = "{";
+        fields += "\"uid\":" + _strField(uid) + ",";
+        fields += "\"name\":" + _strField(name) + ",";
+        fields += "\"state\":" + _intField(currentState) + ",";
+        fields += "\"active\":" + _boolField(true) + ",";
+        fields += "\"hasCustomShift\":" + _boolField(hasCustom) + ",";
+        if (hasCustom && emp) {
+          fields += "\"shiftStartHour\":" + _intField(emp->customShift.startHour) + ",";
+          fields += "\"shiftStartMinute\":" + _intField(emp->customShift.startMinute) + ",";
+          fields += "\"shiftEndHour\":" + _intField(emp->customShift.endHour) + ",";
+          fields += "\"shiftEndMinute\":" + _intField(emp->customShift.endMinute) + ",";
+        }
+        fields += "\"lastUpdate\":" + _intField(timeNow()) + ",";
+        fields += "\"createdAt\":" + _intField(timeNow());
+        fields += "}";
+
+        String mask = "updateMask.fieldPaths=uid&updateMask.fieldPaths=name&updateMask.fieldPaths=state&updateMask.fieldPaths=active&updateMask.fieldPaths=hasCustomShift&updateMask.fieldPaths=lastUpdate&updateMask.fieldPaths=createdAt";
+        if (hasCustom) {
+          mask += "&updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute";
+        }
+        success = _firestorePatch(docPath.c_str(), fields, mask.c_str());
+        if (success) {
+          Serial.printf("[OUTBOX] Bekleyen personel ekleme Firestore'a iletildi: %s\n", name);
+        }
+      }
+    } else if (strcmp(op, "SHIFT") == 0) {
+      ShiftConfig sc;
+      sc.startHour = itemDoc["sh"] | 8;
+      sc.startMinute = itemDoc["sm"] | 0;
+      sc.endHour = itemDoc["eh"] | 17;
+      sc.endMinute = itemDoc["em"] | 0;
+      String docPath = "settings/main";
+      String fields = "{";
+      fields += "\"shiftStartHour\":" + _intField(sc.startHour) + ",";
+      fields += "\"shiftStartMinute\":" + _intField(sc.startMinute) + ",";
+      fields += "\"shiftEndHour\":" + _intField(sc.endHour) + ",";
+      fields += "\"shiftEndMinute\":" + _intField(sc.endMinute) + ",";
+      fields += "\"updatedAt\":" + _intField(timeNow());
+      fields += "}";
+      success = _firestorePatch(docPath.c_str(), fields, "updateMask.fieldPaths=shiftStartHour&updateMask.fieldPaths=shiftStartMinute&updateMask.fieldPaths=shiftEndHour&updateMask.fieldPaths=shiftEndMinute&updateMask.fieldPaths=updatedAt");
+      if (success) {
+        Serial.println(F("[OUTBOX] Bekleyen mesai saati Firestore'a iletildi"));
+      }
+    }
+
+    if (success) {
+      anyProcessed = true;
+    } else {
+      remaining += line + "\n";
+    }
+    yield();
+  }
+  f.close();
+
+  if (anyProcessed) {
+    if (remaining.length() > 0) {
+      storageWrite(PATH_OUTBOX, remaining);
+    } else {
+      storageDelete(PATH_OUTBOX);
+      Serial.println(F("[OUTBOX] Tum bekleyen mutasyonlar basariyla Firestore'a esitlendi."));
+    }
+  }
+}
+
+// ==========================================
+// syncUploadArchivedEvents - events_archive.json dosyasini buluta gonder
+// ==========================================
+void syncUploadArchivedEvents() {
+  if (!wifiIsConnected() || !_ensureAuth() || !storageExists(PATH_ARCHIVE)) return;
+
+  File f = LittleFS.open(PATH_ARCHIVE, "r");
+  if (!f) return;
+
+  StaticJsonDocument<384> itemDoc;
+  int uploaded = 0;
+  bool failed = false;
+
+  while (f.available()) {
+    esp_task_wdt_reset();
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    itemDoc.clear();
+    DeserializationError err = deserializeJson(itemDoc, line);
+    if (err) continue;
+
+    unsigned long id = itemDoc["id"] | 0UL;
+    const char* uid = itemDoc["uid"] | "";
+    const char* name = itemDoc["name"] | "";
+    int type = itemDoc["type"] | 0;
+    unsigned long ts = itemDoc["ts"] | 0UL;
+    const char* date = itemDoc["date"] | "";
+
+    String fields = "{";
+    fields += "\"uid\":" + _strField(uid) + ",";
+    fields += "\"employeeName\":" + _strField(name) + ",";
+    fields += "\"type\":" + _strField(eventTypeToStr((EventType)type)) + ",";
+    fields += "\"timestamp\":" + _intField(ts) + ",";
+    fields += "\"date\":" + _strField(date) + ",";
+    fields += "\"deviceId\":" + _strField(FIREBASE_DEVICE_ID) + ",";
+    fields += "\"localId\":" + _intField(id);
+    fields += "}";
+
+    char docId[48];
+    snprintf(docId, sizeof(docId), "EVT_%s_ARCH_%lu", FIREBASE_DEVICE_ID, id);
+
+    if (_firestoreCreate("events", fields, docId)) {
+      uploaded++;
+    } else {
+      failed = true;
+      break;
+    }
+    yield();
+  }
+  f.close();
+
+  if (uploaded > 0) {
+    Serial.printf("[SYNC] %d arsivlenmis olay Firestore'a basariyla aktarildi.\n", uploaded);
+  }
+
+  // Tum kayitlar sorunsuz gonderildiyse arsiv dosyasini sil
+  if (!failed) {
+    storageDelete(PATH_ARCHIVE);
+    Serial.println(F("[SYNC] events_archive.json basariyla temizlendi."));
+  }
+}
+
+// ==========================================
 // syncUploadEmployeeState - Durum guncelle
 // ==========================================
 void syncUploadEmployeeState(const char* uid, EmployeeState state) {
   if (!wifiIsConnected() || !_ensureAuth()) return;
 
-  // Firestore'da UID ile eslesen dokumani bul ve guncelle
-  // Basit yaklasim: employees/{uid} olarak kaydet
   String docPath = "employees/";
-  // UID'deki ':' karakterlerini kaldir (Firestore doc ID icin)
   String safeUid = uid;
   safeUid.replace(":", "");
   docPath += safeUid;
@@ -704,6 +967,8 @@ void syncUploadEmployeeState(const char* uid, EmployeeState state) {
 // ==========================================
 void syncForceUpload() {
   syncUploadPendingEvents();
+  syncUploadArchivedEvents();
+  syncProcessOutbox();
 }
 
 // ==========================================
@@ -721,19 +986,23 @@ void syncTick() {
 
   unsigned long now = millis();
 
-  // Olay yukleme (30 saniyede bir)
+  // 0. Cevrimdisi bekleyen mutasyonlari ve arsiv olaylarini gonder
+  syncProcessOutbox();
+  syncUploadArchivedEvents();
+
+  // 1. Olay yukleme (15 saniyede bir)
   if (now - _lastEventSync > SYNC_EVENT_INTERVAL || _lastEventSync == 0) {
     _lastEventSync = now;
     syncUploadPendingEvents();
   }
 
-  // Personel listesi indirme (5 dakikada bir)
+  // 2. Personel listesi indirme (5 dakikada bir)
   if (now - _lastEmployeeSync > SYNC_EMPLOYEE_INTERVAL || _lastEmployeeSync == 0) {
     _lastEmployeeSync = now;
     syncDownloadEmployees();    // Firestore'daki degisiklikleri cek
   }
 
-  // Ayar indirme (10 dakikada bir)
+  // 3. Ayar indirme (10 dakikada bir)
   if (now - _lastSettingsSync > SYNC_SETTINGS_INTERVAL || _lastSettingsSync == 0) {
     _lastSettingsSync = now;
     syncDownloadSettings();
